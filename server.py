@@ -45,7 +45,7 @@ app = FastAPI(title="TradeOS Dashboard")
 # it. Unset = no auth, same as before (local dev). This matters on any host
 # reachable from the public internet: without it, anyone with the URL can
 # start/stop the bot, switch to Delta Demo, or close your positions.
-AUTH_TOKEN = os.environ.get("TRADEOS_TOKEN", "")
+AUTH_TOKEN = os.environ.get("TRADEOS_TOKEN", "").strip()
 COOKIE_NAME = "tradeos_auth"
 
 
@@ -263,7 +263,7 @@ app.mount("/static", StaticFiles(directory=str(ROOT / "web")), name="static")
 if __name__ == "__main__":
     # HOST/PORT from env so cloud hosts (Railway/Render/Fly) can bind correctly.
     # Local default stays 127.0.0.1 (not exposed); set HOST=0.0.0.0 to serve externally.
-    host = os.environ.get("HOST", "127.0.0.1")
-    port = int(os.environ.get("PORT", "8000"))
+    host = os.environ.get("HOST", "127.0.0.1").strip()
+    port = int(os.environ.get("PORT", "8000").strip())
     print(f"\n  TradeOS dashboard → http://{host}:{port}\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")

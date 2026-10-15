@@ -19,12 +19,18 @@ _URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generate
 _DEFAULT_MODEL = "gemini-3.8-flash"
 
 
+def _key() -> str:
+    # .strip(): hosting dashboards commonly leave a trailing newline when a
+    # value is pasted into a multi-line env var box.
+    return (os.getenv("GEMINI_API_KEY") or "").strip()
+
+
 def available() -> bool:
-    return bool(os.getenv("GEMINI_API_KEY"))
+    return bool(_key())
 
 
 def model_name() -> str:
-    return os.getenv("GEMINI_MODEL", _DEFAULT_MODEL)
+    return os.getenv("GEMINI_MODEL", _DEFAULT_MODEL).strip()
 
 
 def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
@@ -37,7 +43,7 @@ def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
     reasoning. 0 disables thinking (fast, and leaves all of max_tokens for the
     visible answer) — use it when you want a short, direct output. Left None, the
     model decides, so give max_tokens enough headroom for reasoning + answer."""
-    key = os.getenv("GEMINI_API_KEY")
+    key = _key()
     if not key:
         return None
     gen: dict = {"maxOutputTokens": max_tokens, "temperature": temperature}

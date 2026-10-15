@@ -58,8 +58,11 @@ class Settings:
             risk=risk,
             log_level=c.get("logging", {}).get("level", "INFO"),
             trade_log=c.get("logging", {}).get("trade_log", "logs/trades.csv"),
-            api_key=os.getenv("DELTA_API_KEY", ""),
-            api_secret=os.getenv("DELTA_API_SECRET", ""),
+            # .strip(): hosting dashboards (Render, Railway, ...) commonly add a
+            # trailing newline when a value is pasted into a multi-line env var
+            # box; an API key with a stray \n fails header validation outright.
+            api_key=os.getenv("DELTA_API_KEY", "").strip(),
+            api_secret=os.getenv("DELTA_API_SECRET", "").strip(),
             ai_narrate=c.get("ai", {}).get("narrate", True),
         )
         if s.mode == "DELTA_DEMO" and (not s.api_key or not s.api_secret):
