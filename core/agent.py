@@ -221,6 +221,7 @@ class Agent:
         notional = size * 0.001 * entry
         return {
             "entry_ts": e.get("entry_ts"), "exit_ts": exit_ts,
+            "strategy": e.get("strategy") or "—",
             "side": side, "entry": round(entry, 1), "exit": round(exit_price, 1),
             "size": size, "sl": round(sl, 1) if sl else None,
             "tp": round(e["tp"], 1) if e.get("tp") else None,
@@ -249,6 +250,7 @@ class Agent:
                             "entry": float(row["price"]), "size": int(float(row["size"])),
                             "sl": float(row["sl"]) if row.get("sl") else None,
                             "tp": float(row["tp"]) if row.get("tp") else None,
+                            "strategy": row.get("strategy") or "—",
                         }
                     elif ev == "EXIT" and pending:
                         self.trades.append(self._mk_trade(
@@ -422,18 +424,20 @@ class Agent:
                             reason=plan.reject_reason, equity=f"{self.risk.equity:.2f}")
             return Outcome("reject", plan.reject_reason)
         self.broker.open(plan)
+        strat = sig.strategy or self.s.strategy_name
         self._open_trade = {
             "entry_ts": self._now(), "side": side, "entry": price,
             "size": plan.size_contracts, "sl": plan.stop_loss, "tp": plan.take_profit,
+            "strategy": strat,
         }
-        self._feed("entry", f"{side.upper()} {plan.size_contracts}c @ {price:.1f} "
+        self._feed("entry", f"[{strat}] {side.upper()} {plan.size_contracts}c @ {price:.1f} "
                             f"SL {plan.stop_loss:.0f} TP {plan.take_profit:.0f}")
         self._narrate(f"Opened {side.upper()} {plan.size_contracts} contracts @ {price:.1f}, "
                       f"SL {plan.stop_loss:.0f}, TP {plan.take_profit:.0f}. Signal: {sig.reason}")
         self.tlog.write("ENTRY", side=side, price=f"{price:.1f}",
                         size=plan.size_contracts, sl=f"{plan.stop_loss:.1f}",
                         tp=f"{plan.take_profit:.1f}", equity=f"{self.risk.equity:.2f}",
-                        reason=sig.reason)
+                        reason=sig.reason, strategy=strat)
         return Outcome("entry", sig.reason)
 
     def _do_exit(self, exit_price: float, why: str) -> Outcome:

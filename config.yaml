@@ -9,7 +9,8 @@ mode: PAPER            # PAPER = simulated fills, no API orders.
 market:
   symbol: BTCUSD       # Delta perpetual futures contract symbol
   resolution: "5m"     # candle timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 1d
-  lookback: 200        # how many recent candles to pull each cycle
+  lookback: 300        # how many recent candles to pull each cycle
+                       # (>=300 so EMA200 is reliable and the full NY range is in view)
 
 loop:
   poll_seconds: 30     # how often the agent wakes up and evaluates
@@ -17,9 +18,10 @@ loop:
 # ── Strategy selection ──
 # Points to a file in strategies/.
 strategy:
-  name: ny_range_fakeout    # NY-session range fakeout reversal
+  name: combo               # run both strategies at once; each trade is tagged
   params:
-    rr: 2.0                 # reward:risk — 2.0 = 1:2 (target is 2x the stop distance)
+    subs: [ny_range_fakeout, ema_crossover]
+# Or run a single one directly, e.g.:  name: ny_range_fakeout, params: { rr: 2.0 }
 
 # ── Risk engine (applies to every trade) ──
 risk:

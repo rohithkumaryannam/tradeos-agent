@@ -217,13 +217,16 @@ function renderAnalytics(a) {
     `<div class="perf"><div class="l">${l}</div><div class="n ${c || ""}">${v}</div></div>`).join("");
 }
 
+const STRAT_SHORT = { ny_range_fakeout: "NY fakeout", ema_crossover: "EMA 9/20/200", combo: "combo" };
 function renderTrades(trades) {
   const tagCls = { TP: "entry", SL: "reject", manual: "mode", strategy: "exit", backtest: "bot" };
   $("trades").querySelector("tbody").innerHTML = (trades && trades.length ? [...trades].reverse() : []).map(t => {
     const cls = t.win ? "up" : "down";
     const tag = tagCls[t.reason] || "mode";
+    const strat = STRAT_SHORT[t.strategy] || t.strategy || "—";
     return `<tr>
       <td>${(t.exit_ts || "").slice(11, 19)}</td>
+      <td title="${t.strategy || ""}">${strat}</td>
       <td class="${t.side === "long" ? "up" : "down"}">${(t.side || "").toUpperCase()}</td>
       <td>${fmt(t.entry, 1)}</td>
       <td>${fmt(t.exit, 1)}</td>
@@ -233,7 +236,7 @@ function renderTrades(trades) {
       <td class="mut">${dur(t.duration_s)}</td>
       <td><span class="tag ${tag}">${t.reason}</span></td>
     </tr>`;
-  }).join("") || `<tr><td colspan="9" class="mut">No trades yet</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="mut">No trades yet</td></tr>`;
 }
 
 // ── charts ──

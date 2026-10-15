@@ -5,7 +5,7 @@ import os
 from datetime import datetime, timezone
 
 FIELDS = ["ts", "event", "side", "price", "size", "sl", "tp",
-          "pnl", "equity", "reason"]
+          "pnl", "equity", "reason", "strategy"]
 
 
 class TradeLog:
@@ -17,10 +17,10 @@ class TradeLog:
                 csv.writer(f).writerow(FIELDS)
 
     def write(self, event, side="", price="", size="", sl="", tp="",
-              pnl="", equity="", reason=""):
+              pnl="", equity="", reason="", strategy=""):
         row = [
             datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            event, side, price, size, sl, tp, pnl, equity, reason,
+            event, side, price, size, sl, tp, pnl, equity, reason, strategy,
         ]
         with open(self.path, "a", newline="") as f:
             csv.writer(f).writerow(row)

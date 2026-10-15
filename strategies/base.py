@@ -27,6 +27,9 @@ class Signal:
     # engine then sizes the position off that custom stop distance.
     stop_loss: float | None = None
     take_profit: float | None = None
+    # which strategy produced this signal (set by the combo meta-strategy so each
+    # trade can be attributed; single strategies leave it None)
+    strategy: str | None = None
 
 
 class BaseStrategy(ABC):
