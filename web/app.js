@@ -166,7 +166,9 @@ function renderAccount(s) {
   }
   if (s.account_status === "unavailable") {
     st.textContent = "— unavailable"; st.className = "sub down";
-    body.className = "warn"; body.textContent = "Account data unavailable (check API key / IP whitelist).";
+    body.className = "warn";
+    body.innerHTML = "Account data unavailable (check API key / IP whitelist)."
+      + (s.account_error ? `<div class="mut" style="font-family:var(--mono);font-size:11px;margin-top:6px;word-break:break-all">${s.account_error}</div>` : "");
     return;
   }
   st.textContent = "— testnet (live)"; st.className = "sub up";

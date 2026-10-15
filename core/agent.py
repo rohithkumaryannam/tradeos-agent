@@ -65,7 +65,7 @@ class Agent:
         self.recent: list[dict] = []     # recent events for the UI feed
         # live Delta account cache (DELTA_DEMO only); fail-closed.
         self._acct = {"balances": [], "positions": [], "usd": None,
-                      "status": "n/a", "ts": 0.0}
+                      "status": "n/a", "error": None, "ts": 0.0}
         if self.s.mode == "DELTA_DEMO":
             self._refresh_account(force=True)
             if self._acct["status"] == "live" and self._acct["usd"] is not None:
@@ -140,7 +140,7 @@ class Agent:
         rather than showing stale or fabricated numbers."""
         if self.s.mode != "DELTA_DEMO":
             self._acct = {"balances": [], "positions": [], "usd": None,
-                          "status": "n/a", "ts": time.time()}
+                          "status": "n/a", "error": None, "ts": time.time()}
             return
         if not force and (time.time() - self._acct["ts"] < self._BAL_TTL):
             return
@@ -169,10 +169,10 @@ class Agent:
                 if (self._f(p.get("size")) or 0) != 0
             ]
             self._acct = {"balances": balances, "positions": positions,
-                          "usd": usd, "status": "live", "ts": time.time()}
+                          "usd": usd, "status": "live", "error": None, "ts": time.time()}
         except Exception as e:
             self._acct = {"balances": [], "positions": [], "usd": None,
-                          "status": "unavailable", "ts": time.time()}
+                          "status": "unavailable", "error": str(e)[:300], "ts": time.time()}
             log.warning("account fetch failed: %s", e)
 
     def _reseed_equity(self, equity: float):
@@ -520,6 +520,7 @@ class Agent:
                 "equity_status": equity_status,
                 "equity_asset": "USD",
                 "account_status": self._acct["status"] if is_demo else "n/a",
+                "account_error": self._acct.get("error") if is_demo else None,
                 "account_balances": self._acct["balances"] if is_demo else [],
                 "exchange_positions": self._acct["positions"] if is_demo else [],
                 "start_equity": self.s.risk.account_equity,
