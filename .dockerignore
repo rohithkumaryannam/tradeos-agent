@@ -1,0 +1,10 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+logs/
+data/runtime_state.json
+.env
+*.md

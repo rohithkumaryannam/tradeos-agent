@@ -11,6 +11,10 @@ venv/
 # Runtime data / logs
 logs/
 *.log
+data/runtime_state.json
+
+# Local Claude settings
+.claude/settings.local.json
 
 # OS
 .DS_Store
