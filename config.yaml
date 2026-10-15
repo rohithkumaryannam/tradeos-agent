@@ -1,0 +1,41 @@
+# ─────────────────────────────────────────────────────────────
+# TradeOS — BTC Futures Agent configuration
+# Edit these values to tune the agent. No code changes needed.
+# ─────────────────────────────────────────────────────────────
+
+mode: PAPER            # PAPER = simulated fills, no API orders.
+                       # DELTA_DEMO = real orders on Delta testnet (needs .env keys).
+
+market:
+  symbol: BTCUSD       # Delta perpetual futures contract symbol
+  resolution: "5m"     # candle timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 1d
+  lookback: 200        # how many recent candles to pull each cycle
+
+loop:
+  poll_seconds: 30     # how often the agent wakes up and evaluates
+
+# ── Strategy selection ──
+# Points to a file in strategies/.
+strategy:
+  name: ny_range_fakeout    # NY-session range fakeout reversal
+  params:
+    rr: 2.0                 # reward:risk — 2.0 = 1:2 (target is 2x the stop distance)
+
+# ── Risk engine (applies to every trade) ──
+risk:
+  account_equity: 10000.0   # starting equity for PAPER mode (USD)
+  risk_per_trade_pct: 1.0   # % of equity risked per trade (position sizing)
+  stop_loss_pct: 1.5        # stop-loss distance from entry (%)
+  take_profit_pct: 3.0      # take-profit distance from entry (%)
+  max_leverage: 25          # hard leverage cap
+  max_daily_loss_pct: 5.0   # halt trading for the day after this drawdown (%)
+
+logging:
+  level: INFO               # DEBUG INFO WARNING ERROR
+  trade_log: logs/trades.csv
+
+# ── AI (Google Gemini) ──
+# Needs GEMINI_API_KEY in .env (get one at https://aistudio.google.com/apikey).
+# Override the model with GEMINI_MODEL in .env (default: gemini-3.8-flash).
+ai:
+  narrate: true             # AI writes a one-line "why" into the live feed on each trade
