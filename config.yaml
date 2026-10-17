@@ -10,19 +10,24 @@ market:
   symbol: [BTCUSD, ETHUSD, SOLUSD]   # trades all listed symbols concurrently,
                                      # sharing one account's equity/daily cap.
                                      # A single value (e.g. "BTCUSD") also works.
-  resolution: "1h"     # all four active strategies use completed hourly candles
+  resolution: "5m"     # requested live lane: EMA 9/20/200 on five-minute candles
   lookback: 300        # how many recent candles to pull each cycle
                        # (>=300 so EMA200 is reliable and the full NY range is in view)
 
 loop:
   poll_seconds: 5      # how often the agent wakes up and evaluates
 
+execution:
+  shadow_paper: true   # compare the same signals with simulated fills alongside demo
+
 # ── Strategy selection ──
 # Points to a file in strategies/.
 strategy:
-  name: combo
+  name: ema_crossover
   params:
-    subs: [ny_range_fakeout, ema_crossover, donchian_breakout, time_series_momentum]
+    fast: 9
+    mid: 20
+    trend: 200
 
 # ── Risk engine (applies to every trade) ──
 risk:
@@ -35,6 +40,8 @@ risk:
   max_portfolio_risk_pct: 1.0 # combined entry-to-stop risk across all positions
   max_open_positions: 2      # account-wide position count limit
   max_same_direction_positions: 1 # avoid stacking correlated crypto bets
+  max_consecutive_losses: 3 # pause a strategy after this many consecutive losses
+  strategy_cooldown_minutes: 240 # automatic strategy pause duration
   min_reward_risk: 1.5       # reject entries offering less than 1.5R
   max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
   strategy_risk_pct:         # percent of current account equity per new trade

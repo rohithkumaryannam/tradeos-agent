@@ -230,6 +230,54 @@ def test_same_candle_does_not_reenter_or_use_preentry_extremes(tmp_path):
     assert a.evaluate()["BTCUSD"].event == "reject"
 
 
+def test_same_candle_risk_rejection_is_logged_once(tmp_path):
+    a = agent(tmp_path)
+    a.s.risk.max_same_direction_positions = 1
+    btc, sol = a.markets["BTCUSD"], a.markets["ETHUSD"]
+    btc.last_candles = candles()
+    assert a._open_from_signal(btc, Signal(Action.ENTER_LONG, "test"), 100).event == "entry"
+    sol.last_candles = candles()
+    signal = Signal(Action.ENTER_LONG, "test")
+    assert a._open_from_signal(sol, signal, 100).event == "reject"
+    assert a._open_from_signal(sol, signal, 100).event == "hold"
+    assert len([e for e in a.recent if e["event"] == "reject"]) == 1
+
+
+def test_strategy_pauses_after_consecutive_losses(tmp_path):
+    now = time.time()
+    a = agent(tmp_path)
+    a.trades = [{"strategy": "ema_crossover", "win": False,
+                 "exit_ts": __import__("datetime").datetime.fromtimestamp(
+                     now - i * 60, __import__("datetime").timezone.utc).isoformat()}
+                for i in range(3)]
+    ok, reason = a._strategy_guard("ema_crossover")
+    assert not ok
+    assert "3 consecutive losses" in reason
+
+
+def test_shadow_lane_is_independent_from_live_broker(tmp_path):
+    settings = Settings(symbols=["BTCUSD"], shadow_paper=True, ai_narrate=False,
+                        trade_log=str(tmp_path / "trades.csv"))
+    a = Agent(settings)
+    a.shadow_markets["BTCUSD"].strategy = Mock(
+        closed_candles_only=False,
+        generate=lambda *_: Signal(Action.ENTER_LONG, "shadow test"),
+    )
+    a._evaluate_shadow("BTCUSD", candles())
+    assert a.markets["BTCUSD"].broker.position is None
+    assert a.shadow_markets["BTCUSD"].broker.position is not None
+
+
+def test_read_only_instance_cannot_execute(tmp_path):
+    a = agent(tmp_path)
+    a.execution_enabled = False
+    a.execution_reason = "standby"
+    m = a.markets["BTCUSD"]
+    m.last_candles = candles()
+    assert a._open_from_signal(m, Signal(Action.ENTER_LONG, "test"), 100).event == "reject"
+    assert m.broker.position is None
+
+
 def test_daily_budget_rolls_at_utc_midnight():
     from datetime import datetime, timezone
     now = [datetime(2026, 10, 16, 23, 59, tzinfo=timezone.utc).timestamp()]

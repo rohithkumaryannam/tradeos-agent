@@ -23,13 +23,17 @@ _DEFAULT_SUBS = [
     "donchian_breakout",
     "time_series_momentum",
 ]
+_DEFAULT_PRIORITIES = {"donchian_breakout": 40, "time_series_momentum": 30,
+                       "ema_crossover": 20, "ny_range_fakeout": 10}
 
 
 class Strategy(BaseStrategy):
-    def __init__(self, subs=None, **kw):
-        super().__init__(subs=subs, **kw)
+    def __init__(self, subs=None, priorities=None, **kw):
+        super().__init__(subs=subs, priorities=priorities, **kw)
         names = subs or _DEFAULT_SUBS
         self.subs = [(n, load_strategy(n, {})) for n in names]
+        scores = _DEFAULT_PRIORITIES | (priorities or {})
+        self._entry_order = sorted(self.subs, key=lambda item: scores.get(item[0], 0), reverse=True)
         self.closed_candles_only = any(getattr(s, "closed_candles_only", False) for _, s in self.subs)
         self.required_candles = max(getattr(s, "required_candles", 1) for _, s in self.subs)
         if self.closed_candles_only:
@@ -40,7 +44,7 @@ class Strategy(BaseStrategy):
     def generate(self, candles, position_side):
         if position_side is None:
             self._owner = None
-            for nm, strat in self.subs:
+            for nm, strat in self._entry_order:
                 sig = strat.generate(candles, None)
                 if sig.action in (Action.ENTER_LONG, Action.ENTER_SHORT):
                     self._owner = nm

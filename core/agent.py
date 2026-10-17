@@ -32,7 +32,7 @@ from core.broker import PaperBroker, DeltaBroker
 from core.indicators import ema, rsi, closes
 from core.risk import RiskEngine
 from core.trade_log import TradeLog
-from core import ai, db
+from core import ai, db, alerts
 from strategies.base import Action, Signal
 from strategies.loader import load_strategy, available_strategies
 
@@ -67,6 +67,16 @@ class Market:
     last_error: str | None = None
     last_outcome: Outcome = field(default_factory=Outcome)
     last_entry_candle: float | None = None
+    last_rejected_entry: tuple | None = None
+    last_reconcile_fingerprint: tuple | None = None
+
+
+@dataclass
+class ShadowMarket:
+    broker: object
+    strategy: object
+    open_trade: dict | None = None
+    last_entry_candle: float | None = None
 
 
 class Agent:
@@ -87,6 +97,15 @@ class Agent:
             self._build_strategy(m)
             self._build_broker(m)
         self._align_strategy_data()
+        self.shadow_risk = RiskEngine(replace(settings.risk), clock=self.clock)
+        self.shadow_markets: dict[str, ShadowMarket] = {}
+        if settings.shadow_paper:
+            for sym, market in self.markets.items():
+                self.shadow_markets[sym] = ShadowMarket(
+                    PaperBroker(lambda price, m=market: m.broker.contract_value(price)),
+                    load_strategy(settings.strategy_name, settings.strategy_params),
+                )
+        self.shadow_trades: list[dict] = []
 
         # structured completed-trade ledger (persists via the CSV log)
         self.trades: list[dict] = []
@@ -95,6 +114,8 @@ class Agent:
 
         self.auto = True                 # auto-execute vs manual confirm
         self.entries_paused = False
+        self.execution_enabled = True
+        self.execution_reason = "single local instance"
         self.last_cycle_at = None
         self.last_cycle_ms = None
         self.equity_curve: list[dict] = [
@@ -177,6 +198,11 @@ class Agent:
                 m.pending = None
                 m.last_candles = []
                 m.last_entry_candle = None
+            if self.s.shadow_paper:
+                for sym, shadow in self.shadow_markets.items():
+                    shadow.strategy = load_strategy(name, {})
+                    shadow.open_trade = None
+                    shadow.broker.position = None
             self._align_strategy_data()
             self._feed("mode", f"strategy -> {name}")
 
@@ -325,7 +351,13 @@ class Agent:
             ]
             for m in self.markets.values():
                 if isinstance(m.broker, DeltaBroker):
+                    before = self._position_fingerprint(m.broker.position)
                     m.broker.reconcile(raw_pos)
+                    after = self._position_fingerprint(m.broker.position)
+                    if before != after and m.last_reconcile_fingerprint != after:
+                        self._feed("reconcile", f"[{m.symbol}] exchange position changed outside "
+                                   f"this instance: {before or 'flat'} -> {after or 'flat'}")
+                    m.last_reconcile_fingerprint = after
                     if m.broker.position is None and m.open_trade:
                         self._record_exchange_exit(m)
             self._acct = {"balances": balances, "positions": positions,
@@ -387,6 +419,36 @@ class Agent:
     def _feed(self, event, detail):
         self.recent.insert(0, {"t": self._now(), "event": event, "detail": detail})
         self.recent = self.recent[:50]
+        if event in ("entry", "exit", "error", "account", "reconcile", "risk"):
+            alerts.notify(event, detail)
+
+    @staticmethod
+    def _position_fingerprint(position):
+        if position is None:
+            return None
+        return (position.side, int(position.size), round(float(position.entry), 8))
+
+    def _strategy_guard(self, strategy: str) -> tuple[bool, str]:
+        losses, last_exit = 0, None
+        for trade in reversed(self.trades):
+            if trade.get("strategy") != strategy:
+                continue
+            if trade.get("win"):
+                break
+            losses += 1
+            last_exit = last_exit or trade.get("exit_ts")
+        limit = self.s.risk.max_consecutive_losses
+        if losses < limit or not last_exit:
+            return True, ""
+        try:
+            ended = datetime.fromisoformat(last_exit.replace("Z", "+00:00")).timestamp()
+        except (ValueError, AttributeError):
+            return True, ""
+        remaining = self.s.risk.strategy_cooldown_minutes * 60 - (self.clock() - ended)
+        if remaining <= 0:
+            return True, ""
+        return False, (f"{strategy} paused after {losses} consecutive losses; "
+                       f"retry in {math.ceil(remaining / 60)}m")
 
     def _market(self, symbol: str | None) -> Market:
         if symbol is None:
@@ -609,6 +671,18 @@ class Agent:
             }
         return out
 
+    def _shadow_snapshot(self) -> dict:
+        trades = self.shadow_trades
+        wins = [t for t in trades if t.get("win")]
+        return {
+            "enabled": self.s.shadow_paper,
+            "equity": round(self.shadow_risk.equity, 2) if self.s.shadow_paper else None,
+            "open_positions": sum(1 for s in self.shadow_markets.values() if s.broker.position),
+            "trades": len(trades),
+            "pnl": round(sum(t["pnl"] for t in trades), 2),
+            "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else None,
+        }
+
     def _narrate(self, context: str):
         """Fire-and-forget: ask Gemini for a one-line explanation of a trade and
         drop it into the live feed. Runs in a thread so the Gemini call never
@@ -672,6 +746,8 @@ class Agent:
             for sym, m in self.markets.items():
                 try:
                     out = self._evaluate_market(m)
+                    if self.s.shadow_paper:
+                        self._evaluate_shadow(m.symbol, m.last_candles)
                 except Exception as e:
                     m.last_error = str(e)[:300]
                     m.pending = None
@@ -682,6 +758,67 @@ class Agent:
             self.last_cycle_at = self._now()
             self.last_cycle_ms = round((time.monotonic() - started) * 1000)
             return outcomes
+
+    def _shadow_portfolio(self):
+        positions = [s.broker.position for s in self.shadow_markets.values() if s.broker.position]
+        return (sum(p.notional for p in positions),
+                sum(abs(p.entry - p.stop_loss) * (p.notional / p.entry) for p in positions),
+                len(positions))
+
+    def _evaluate_shadow(self, symbol: str, candles: list[dict]):
+        """Independent staging lane: same strategy/data, simulated fills only."""
+        if not candles:
+            return
+        shadow = self.shadow_markets[symbol]
+        last, price = candles[-1], float(candles[-1]["close"])
+        bracket = shadow.broker.check_bracket(last)
+        if bracket:
+            _, exit_price, why = bracket
+            entry = shadow.open_trade
+            pnl = shadow.broker.close(exit_price)
+            self.shadow_risk.register_pnl(pnl)
+            if entry:
+                self.shadow_trades.append(self._mk_trade(symbol, entry, self._now(), exit_price, pnl, why))
+                self.shadow_trades = self.shadow_trades[-500:]
+            shadow.open_trade = None
+        side = shadow.broker.position.side if shadow.broker.position else None
+        signal_candles = candles
+        if getattr(shadow.strategy, "closed_candles_only", False):
+            seconds = _RES_SECONDS[self.s.resolution]
+            signal_candles = [c for c in candles if float(c["time"]) + seconds <= self.clock()]
+            if not signal_candles:
+                return
+        sig = shadow.strategy.generate(signal_candles, side)
+        if sig.action == Action.EXIT and side:
+            entry = shadow.open_trade
+            pnl = shadow.broker.close(price)
+            self.shadow_risk.register_pnl(pnl)
+            if entry:
+                self.shadow_trades.append(self._mk_trade(symbol, entry, self._now(), price, pnl, sig.reason))
+            shadow.open_trade = None
+            return
+        if sig.action not in (Action.ENTER_LONG, Action.ENTER_SHORT) or side:
+            return
+        stamp = last.get("time")
+        if stamp == shadow.last_entry_candle:
+            return
+        trade_side = "long" if sig.action == Action.ENTER_LONG else "short"
+        notional, stop_risk, count = self._shadow_portfolio()
+        same = sum(1 for s in self.shadow_markets.values()
+                   if s.broker.position and s.broker.position.side == trade_side)
+        strategy = sig.strategy or self.s.strategy_name
+        plan = self.shadow_risk.size_position(
+            trade_side, price, shadow.broker.contract_value(price), sig.stop_loss, sig.take_profit,
+            notional, stop_risk, count, same, self.s.risk.risk_for(strategy),
+        )
+        if not plan.ok:
+            return
+        shadow.broker.open(plan)
+        shadow.last_entry_candle = stamp
+        shadow.open_trade = {"entry_ts": self._now(), "side": trade_side, "entry": price,
+                             "size": plan.size_contracts, "sl": plan.stop_loss,
+                             "tp": plan.take_profit, "strategy": strategy,
+                             "contract_value": shadow.broker.contract_value(price)}
 
     def _data_issue(self, m: Market) -> str:
         if m.last_error:
@@ -811,6 +948,8 @@ class Agent:
 
     def force_close(self, symbol: str | None = None) -> Outcome:
         with self.lock:
+            if not self.execution_enabled:
+                return Outcome("reject", self.execution_reason or "read-only standby instance")
             m = self._market(symbol)
             if m.broker.position is None:
                 return Outcome("none", "no open position")
@@ -819,6 +958,8 @@ class Agent:
 
     # ── internal execution ──
     def _open_from_signal(self, m: Market, sig: Signal, price: float) -> Outcome:
+        if not self.execution_enabled:
+            return Outcome("reject", self.execution_reason or "read-only standby instance")
         if self.entries_paused:
             return Outcome("reject", "new entries are paused")
         if sig.reference_price is not None and sig.max_entry_deviation is not None:
@@ -829,6 +970,9 @@ class Agent:
         if m.broker.position is not None:
             return Outcome("reject", "position already open")
         stamp = m.last_candles[-1].get("time") if m.last_candles else None
+        rejection_key = (stamp, sig.action.value)
+        if m.last_rejected_entry and m.last_rejected_entry[:2] == rejection_key:
+            return Outcome("hold", f"entry rejected earlier this candle: {m.last_rejected_entry[2]}")
         if stamp is not None and stamp == m.last_entry_candle:
             return Outcome("reject", "already entered on this candle")
         if self.s.mode == "DELTA_DEMO":
@@ -843,6 +987,11 @@ class Agent:
             return Outcome("reject", "unprotected position; entries blocked")
         side = "long" if sig.action == Action.ENTER_LONG else "short"
         strat = sig.strategy or self.s.strategy_name
+        allowed, guard_reason = self._strategy_guard(strat)
+        if not allowed:
+            m.last_rejected_entry = rejection_key + (guard_reason,)
+            self._feed("risk", f"[{m.symbol}] {guard_reason}")
+            return Outcome("reject", guard_reason)
         cv = m.broker.contract_value(price)
         same_direction = sum(
             1 for market in self.markets.values()
@@ -855,12 +1004,14 @@ class Agent:
                                        same_direction_positions=same_direction,
                                        risk_pct=self.s.risk.risk_for(strat))
         if not plan.ok:
+            m.last_rejected_entry = rejection_key + (plan.reject_reason,)
             self._feed("reject", f"[{m.symbol}] {plan.reject_reason}")
             self.tlog.write("REJECT", side=side, price=f"{price:.1f}",
                             reason=plan.reject_reason, equity=f"{self.risk.equity:.2f}",
                             symbol=m.symbol)
             return Outcome("reject", plan.reject_reason)
         m.broker.open(plan)
+        m.last_rejected_entry = None
         m.last_entry_candle = stamp
         m.open_trade = {
             "entry_ts": self._now(), "side": side, "entry": price,
@@ -878,6 +1029,8 @@ class Agent:
         return Outcome("entry", sig.reason)
 
     def _do_exit(self, m: Market, exit_price: float, why: str) -> Outcome:
+        if not self.execution_enabled:
+            return Outcome("hold", self.execution_reason or "read-only standby instance")
         side = m.broker.position.side
         pnl = m.broker.close(exit_price)
         self.risk.register_pnl(pnl)
@@ -1035,6 +1188,9 @@ class Agent:
                 "mode": self.s.mode,
                 "auto": self.auto,
                 "entries_paused": self.entries_paused,
+                "execution_enabled": self.execution_enabled,
+                "execution_reason": self.execution_reason,
+                "alerts_configured": alerts.configured(),
                 "portfolio": portfolio,
                 "health": {"last_cycle": self.last_cycle_at, "cycle_ms": self.last_cycle_ms},
                 "symbols": list(self.markets.keys()),
@@ -1087,7 +1243,15 @@ class Agent:
                     "max_stop_distance_pct": self.s.risk.max_stop_distance_pct,
                     "max_same_direction_positions": self.s.risk.max_same_direction_positions,
                     "strategy_risk_pct": self.s.risk.strategy_risk_pct,
+                    "max_consecutive_losses": self.s.risk.max_consecutive_losses,
+                    "strategy_cooldown_minutes": self.s.risk.strategy_cooldown_minutes,
                 },
+                "strategy_guards": {
+                    name: {"enabled": self._strategy_guard(name)[0],
+                           "reason": self._strategy_guard(name)[1]}
+                    for name in active_strategies
+                },
+                "shadow_paper": self._shadow_snapshot(),
             }
 
     # ── CLI loop (unchanged behaviour) ──

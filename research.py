@@ -55,7 +55,7 @@ def download(symbol, resolution, days, directory):
     return path
 
 
-def compare_dataset(payload, fee_bps=5, slippage_bps=2):
+def compare_dataset(payload, fee_bps=5, slippage_bps=2, candidates=CANDIDATES):
     candles = payload["candles"]
     if len(candles) < 1000:
         raise ValueError("comparison requires at least 1,000 candles")
@@ -64,7 +64,7 @@ def compare_dataset(payload, fee_bps=5, slippage_bps=2):
     split = int(len(candles) * .7)
     rows = []
     with tempfile.TemporaryDirectory(prefix="tradeos-research-") as directory:
-        for strategy in CANDIDATES:
+        for strategy in candidates:
             for sample, warmup in (("full", 250), ("holdout", split - 1)):
                 settings = Settings(
                     mode="PAPER", symbols=[payload["symbol"]], resolution=payload["resolution"],
@@ -85,7 +85,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--download", action="store_true")
     parser.add_argument("--symbols", nargs="+", default=["BTCUSD", "ETHUSD", "SOLUSD"])
-    parser.add_argument("--resolution", choices=["1h", "4h", "1d"], default="1h")
+    parser.add_argument("--resolution", choices=list(_RES_SECONDS), default="1h")
+    parser.add_argument("--candidates", nargs="+", choices=CANDIDATES, default=list(CANDIDATES))
     parser.add_argument("--days", type=int, default=180)
     parser.add_argument("--fee-bps", type=float, default=5)
     parser.add_argument("--slippage-bps", type=float, default=2)
@@ -99,6 +100,7 @@ def main():
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": "research_only", "selection": "Fixed candidates selected from literature; not a ranking of all strategies",
         "holdout_fraction": .3, "risk_per_trade_pct": .5, "max_leverage": 2,
+        "candidates": args.candidates, "resolution": args.resolution,
         "warning": "No profit guarantee. Funding, liquidation and market impact are excluded. The holdout is a chronological diagnostic, not evidence of a statistically validated edge. Do not select or tune parameters using this holdout and still call it untouched.",
         "datasets": [], "results": [],
     }
@@ -108,7 +110,7 @@ def main():
         payload = json.loads(raw)
         report["datasets"].append({"symbol": payload["symbol"], "source": payload["source"],
                                    "sha256": hashlib.sha256(raw).hexdigest(), "candles": len(payload["candles"])})
-        results = compare_dataset(payload, args.fee_bps, args.slippage_bps)
+        results = compare_dataset(payload, args.fee_bps, args.slippage_bps, args.candidates)
         report["results"].extend(results)
         for row in results:
             if row["sample"] == "holdout":

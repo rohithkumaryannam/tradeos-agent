@@ -182,7 +182,7 @@ function render(s) {
   }
   const mk = (s.markets && s.markets[activeSymbol]) || {};
 
-  $("running").textContent = s.running ? "RUNNING" : "STOPPED";
+  $("running").textContent = s.running ? (s.execution_enabled ? "RUNNING" : "STANDBY") : "STOPPED";
   $("status-dot").className = "dot" + (s.running ? " on" : "");
   $("mode").textContent = s.mode;
   $("execmode").textContent = s.auto ? "AUTO" : "MANUAL";

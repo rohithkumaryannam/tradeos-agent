@@ -123,6 +123,10 @@ class DeltaBroker:
             self.execution_issue = "startup reconciliation failed; entries blocked"
             log.warning("could not reconcile %s on startup: %s", self.symbol, e)
             return
+        before = None if self.position is None else (
+            self.position.side, self.position.size, self.position.entry,
+            self.position.stop_loss, self.position.take_profit,
+        )
         live = next((p for p in positions
                     if p.get("product_id") == self.product_id
                     and (float(p.get("size") or 0)) != 0), None)
@@ -146,8 +150,11 @@ class DeltaBroker:
             stop_loss=sl, take_profit=tp, notional=notional,
             bracket_confirmed=sl is not None and tp is not None,
         )
-        log.info("reconciled existing %s position: %s %s @ %s (bracket=%s)",
-                self.symbol, side, int(abs(size)), entry, self.position.bracket_confirmed)
+        after = (self.position.side, self.position.size, self.position.entry,
+                 self.position.stop_loss, self.position.take_profit)
+        if before != after:
+            log.info("reconciled existing %s position: %s %s @ %s (bracket=%s)",
+                     self.symbol, side, int(abs(size)), entry, self.position.bracket_confirmed)
 
     def contract_value(self, price: float) -> float:
         return self.contract_size * price

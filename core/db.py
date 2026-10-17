@@ -8,20 +8,26 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 
 log = logging.getLogger("tradeos")
 
 _lock = threading.Lock()
 _db = None
 _tried = False
+_last_attempt = 0.0
 
 
 def _connect():
-    global _db, _tried
+    global _db, _tried, _last_attempt
     with _lock:
-        if _tried:
+        if _db is not None:
             return _db
+        now = time.monotonic()
+        if _tried and now - _last_attempt < 30:
+            return None
         _tried = True
+        _last_attempt = now
         uri = os.getenv("MONGODB_URI", "").strip()
         if not uri:
             return None
@@ -44,6 +50,12 @@ def _connect():
 
 def available() -> bool:
     return _connect() is not None
+
+
+def status() -> dict:
+    """Small, secret-free connectivity status for /healthz."""
+    configured = bool(os.getenv("MONGODB_URI", "").strip())
+    return {"configured": configured, "connected": available() if configured else False}
 
 
 def insert_trade(row: dict):
@@ -93,3 +105,48 @@ def save_state(doc: dict):
         db.runtime_state.update_one({"_id": "current"}, {"$set": dict(doc)}, upsert=True)
     except Exception as e:
         log.warning("MongoDB state save failed: %s", e)
+
+
+def delete_state_fields(*names: str):
+    db = _connect()
+    if db is None or not names:
+        return
+    try:
+        db.runtime_state.update_one(
+            {"_id": "current"}, {"$unset": {name: "" for name in names}}
+        )
+    except Exception as e:
+        log.warning("MongoDB state cleanup failed: %s", e)
+
+
+def acquire_execution_lease(owner: str, ttl_seconds: int = 30) -> bool:
+    """Atomically elect one DELTA_DEMO executor across all instances."""
+    db = _connect()
+    if db is None:
+        return False
+    now = time.time()
+    try:
+        doc = db.execution_lease.find_one_and_update(
+            {"_id": "delta-demo", "$or": [
+                {"owner": owner}, {"expires_at": {"$lte": now}},
+                {"expires_at": {"$exists": False}},
+            ]},
+            {"$set": {"owner": owner, "expires_at": now + ttl_seconds,
+                       "renewed_at": now}},
+            upsert=True, return_document=True,
+        )
+        return bool(doc and doc.get("owner") == owner)
+    except Exception as e:
+        # A duplicate-key error means another instance owns the singleton.
+        log.warning("execution lease unavailable: %s", e)
+        return False
+
+
+def release_execution_lease(owner: str):
+    db = _connect()
+    if db is None:
+        return
+    try:
+        db.execution_lease.delete_one({"_id": "delta-demo", "owner": owner})
+    except Exception as e:
+        log.warning("execution lease release failed: %s", e)

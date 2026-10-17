@@ -15,6 +15,7 @@ import hmac
 import json
 import logging
 import os
+import socket
 import threading
 import time
 from pathlib import Path
@@ -30,6 +31,7 @@ import uvicorn
 from core.settings import Settings
 from core.agent import Agent, _RES_SECONDS
 from core import state
+from core import db
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)-5s %(message)s",
@@ -39,6 +41,16 @@ log = logging.getLogger("tradeos.server")
 ROOT = Path(__file__).resolve().parent
 settings = Settings.load()
 agent = Agent(settings)
+CONFIG_REVISION = 2
+CONFIG_RISK = {
+    key: getattr(settings.risk, key) for key in (
+        "max_portfolio_risk_pct", "max_open_positions",
+        "max_same_direction_positions", "max_leverage",
+        "max_daily_loss_pct", "strategy_risk_pct",
+    )
+}
+CONFIG_STRATEGY = settings.strategy_name
+CONFIG_RESOLUTION = settings.resolution
 
 @asynccontextmanager
 async def lifespan(app):
@@ -100,7 +112,7 @@ def login_submit(token: str = Form("")):
 
 @app.middleware("http")
 async def require_auth(request: Request, call_next):
-    if not AUTH_TOKEN or request.url.path in ("/login",):
+    if not AUTH_TOKEN or request.url.path in ("/login", "/healthz"):
         return await call_next(request)
     if _token_ok(request.cookies.get(COOKIE_NAME)):
         return await call_next(request)
@@ -117,13 +129,42 @@ class BotRunner:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._control = threading.Lock()
+        self.last_success_at: float | None = None
+        self.last_error: str | None = None
+        self.owner = (os.getenv("TRADEOS_INSTANCE_ID") or os.getenv("RENDER_INSTANCE_ID")
+                      or f"{socket.gethostname()}:{os.getpid()}")
+
+    def _set_execution_role(self):
+        role = os.getenv("TRADEOS_EXECUTION_ROLE", "auto").strip().lower()
+        if self.agent.s.mode != "DELTA_DEMO":
+            enabled, reason = True, "paper execution is local"
+        elif role in ("read_only", "readonly", "standby"):
+            enabled, reason = False, "configured read-only standby"
+        elif role == "active":
+            enabled, reason = True, "configured active executor"
+        elif os.getenv("MONGODB_URI", "").strip():
+            enabled = db.acquire_execution_lease(
+                self.owner, max(30, int(self.agent.s.poll_seconds) * 4)
+            )
+            reason = ("owns the shared execution lease" if enabled
+                      else "read-only standby; another instance owns the execution lease")
+        else:
+            # Preserve simple local/demo installs; production should use the
+            # shared Mongo lease or an explicit role.
+            enabled, reason = True, "single instance (no shared lease configured)"
+        self.agent.execution_enabled = enabled
+        self.agent.execution_reason = reason
 
     def _loop(self):
         try:
             while not self._stop.is_set():
                 try:
+                    self._set_execution_role()
                     self.agent.evaluate()
+                    self.last_success_at = time.time()
+                    self.last_error = None
                 except Exception as e:
+                    self.last_error = str(e)[:300]
                     log.error("eval error: %s", e)
                 self._stop.wait(self.agent.s.poll_seconds)
         finally:
@@ -149,6 +190,8 @@ class BotRunner:
             self.running = False
             self.agent._feed("bot", "stop requested; current cycle may finish")
             state.save(running=False)
+            if os.getenv("MONGODB_URI", "").strip():
+                db.release_execution_lease(self.owner)
             log.info("bot stop requested")
 
 
@@ -162,6 +205,11 @@ def _resume_from_state():
     if not st:
         return
     try:
+        if int(st.get("config_revision", 0)) < CONFIG_REVISION:
+            # One-time migration: discard the silent legacy risk/strategy
+            # overrides that caused config.yaml to stop reflecting reality.
+            state.delete("risk", "strategy", "resolution")
+            st = state.load()
         if st.get("risk"):
             agent.update_risk_controls(st["risk"])
         if st.get("strategy"):
@@ -169,7 +217,7 @@ def _resume_from_state():
         if st.get("resolution") in _RES_SECONDS:
             agent.s.resolution = st["resolution"]
         agent._align_strategy_data()
-        state.save(resolution=agent.s.resolution)
+        state.save(resolution=agent.s.resolution, config_revision=CONFIG_REVISION)
         if st.get("mode"):
             agent.set_mode(st["mode"])
         if "auto" in st:
@@ -185,7 +233,43 @@ def _resume_from_state():
 # ── REST ──
 @app.get("/api/state")
 def get_state():
-    return JSONResponse(agent.snapshot() | {"running": runner.running})
+    return JSONResponse(_snapshot())
+
+
+def _snapshot():
+    snap = agent.snapshot() | {"running": runner.running}
+    runtime = state.load()
+    override = runtime.get("risk") if runtime.get("config_revision") == CONFIG_REVISION else None
+    differences = {
+        key: {"config": CONFIG_RISK[key], "runtime": value}
+        for key, value in (override or {}).items()
+        if key in CONFIG_RISK and value != CONFIG_RISK[key]
+    }
+    snap["configuration"] = {
+        "risk_source": "runtime_override" if override else "config.yaml",
+        "risk_overrides": differences,
+        "config_strategy": CONFIG_STRATEGY,
+        "config_resolution": CONFIG_RESOLUTION,
+    }
+    return snap
+
+
+@app.get("/healthz")
+def healthz():
+    now = time.time()
+    stale_after = max(60, agent.s.poll_seconds * 4)
+    checks = {
+        "loop": (not runner.running) or bool(runner.last_success_at and now - runner.last_success_at <= stale_after),
+        "delta": agent.s.mode != "DELTA_DEMO" or agent._acct.get("status") == "live",
+        "mongo": not os.getenv("MONGODB_URI", "").strip() or db.available(),
+    }
+    healthy = all(checks.values())
+    body = {"status": "ok" if healthy else "unhealthy", "checks": checks,
+            "running": runner.running, "last_cycle_at": agent.last_cycle_at,
+            "execution_enabled": agent.execution_enabled,
+            "execution_reason": agent.execution_reason,
+            "error": runner.last_error}
+    return JSONResponse(body, status_code=200 if healthy else 503)
 
 
 @app.post("/api/bot/start")
@@ -225,10 +309,17 @@ async def set_risk_controls(request: Request):
                 "max_daily_loss_pct", "strategy_risk_pct",
             )
         }
-        state.save(risk=persisted)
+        state.save(risk=persisted, config_revision=CONFIG_REVISION)
         return {"risk": persisted}
     except (ValueError, TypeError, json.JSONDecodeError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/risk/reset")
+def reset_risk_controls():
+    config = agent.update_risk_controls(CONFIG_RISK)
+    state.delete("risk")
+    return {"risk": CONFIG_RISK, "source": "config.yaml"}
 
 
 @app.post("/api/mode/{mode}")
@@ -255,7 +346,8 @@ def set_auto(flag: str):
 def set_strategy(name: str):
     try:
         agent.set_strategy(name)
-        state.save(strategy=name, resolution=agent.s.resolution)
+        state.save(strategy=name, resolution=agent.s.resolution,
+                   config_revision=CONFIG_REVISION)
         return {"strategy": name, "resolution": agent.s.resolution}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -341,7 +433,11 @@ def strategy_research():
     if not path.exists():
         return {"status": "not_run", "results": [], "warning": "Run research.py to generate a historical comparison."}
     try:
-        return json.loads(path.read_text())
+        report = json.loads(path.read_text())
+        validation = ROOT / "data" / "ema_5m_validation.json"
+        if validation.exists():
+            report["validations"] = {"ema_5m": json.loads(validation.read_text())}
+        return report
     except (ValueError, OSError):
         return JSONResponse({"error": "research report unavailable"}, status_code=503)
 
@@ -365,7 +461,7 @@ async def ws(socket: WebSocket):
     await socket.accept()
     try:
         while True:
-            snap = agent.snapshot() | {"running": runner.running}
+            snap = _snapshot()
             await socket.send_text(json.dumps(snap, default=str))
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:

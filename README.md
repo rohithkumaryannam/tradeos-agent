@@ -15,7 +15,9 @@ python server.py
 Start in **Paper**. Choose a strategy, then use **Run one cycle** or **Start Bot**.
 For Delta Demo, configure testnet credentials using `.env.example`. Credentials
 stay on the server. Set `TRADEOS_TOKEN` when deploying beyond localhost. Run a
-single server worker: runtime positions and execution locks are process-local.
+MongoDB is recommended when more than one instance can run: TradeOS uses an
+atomic lease so exactly one Delta Demo instance can execute while the others
+remain read-only. Set `TRADEOS_EXECUTION_ROLE=read_only` to force a monitor.
 
 ## Workspace
 
@@ -46,6 +48,8 @@ Configure `risk` in `config.yaml`:
 | `max_leverage` | Combined gross notional / equity ceiling |
 | `max_daily_loss_pct` | Realized loss cap, resetting at UTC midnight |
 | `stop_loss_pct`, `take_profit_pct` | Default bracket distances |
+| `max_consecutive_losses` | Pause one strategy after this many consecutive losses |
+| `strategy_cooldown_minutes` | Duration of that strategy pause |
 
 Sizing uses the remaining portfolio budgets. Non-finite prices, incorrect
 bracket direction, partial brackets, and unknown contract specifications reject
@@ -65,6 +69,19 @@ process-local. An accepted entry is retained locally even if the subsequent
 bracket-verification request fails. Startup reconciliation adopts existing
 positions; failed reconciliation blocks entries. Order fields follow the
 [Delta API reference](https://docs.delta.exchange/).
+
+Dashboard risk edits are explicit runtime overrides stored in MongoDB/local
+state. The Risk page names the active source, lists differences from
+`config.yaml`, and can reset the override. The configured paper shadow lane
+runs the same market inputs through an independent simulated broker and reports
+its results under System Health.
+
+Use `/healthz` for uptime monitoring. It requires no dashboard cookie and
+returns HTTP 503 when the requested bot loop, Delta account, or configured
+MongoDB dependency is unhealthy. `/login` only checks the web server.
+Optional webhook/Slack, Telegram, and SMTP settings are documented in
+`.env.example`; alerts cover entries, exits, account failures, risk pauses, and
+position reconciliation changes.
 
 ## Offline strategy replay
 
@@ -120,6 +137,7 @@ shared engine. Strategy changes require flat positions and clear pending signals
 pip install -r requirements-dev.txt
 python -m pytest -q
 node --check web/app.js
+python scripts/check_secrets.py
 ```
 
 Tests block outbound HTTP, disable AI, and isolate runtime-state files. They cover

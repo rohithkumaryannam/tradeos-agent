@@ -1,0 +1,385 @@
+{
+  "generated_at": "2026-10-17T21:52:59.665628+00:00",
+  "status": "research_only",
+  "selection": "Fixed candidates selected from literature; not a ranking of all strategies",
+  "holdout_fraction": 0.3,
+  "risk_per_trade_pct": 0.5,
+  "max_leverage": 2,
+  "candidates": [
+    "ema_crossover"
+  ],
+  "resolution": "5m",
+  "warning": "No profit guarantee. Funding, liquidation and market impact are excluded. The holdout is a chronological diagnostic, not evidence of a statistically validated edge. Do not select or tune parameters using this holdout and still call it untouched.",
+  "datasets": [
+    {
+      "symbol": "BTCUSD",
+      "source": "https://api.india.delta.exchange",
+      "sha256": "274663e3c421e2bdf9741f86f19a4c688bdbdaabfa244ded0e80632b90cd774a",
+      "candles": 17280
+    },
+    {
+      "symbol": "ETHUSD",
+      "source": "https://api.india.delta.exchange",
+      "sha256": "0496c7d9e92edf2180511aea74b59f123ce5a8e5ac05b5d90ee6a25200c46f37",
+      "candles": 17280
+    },
+    {
+      "symbol": "SOLUSD",
+      "source": "https://api.india.delta.exchange",
+      "sha256": "a83d8d2b0ae48b66ac69a8c294ecb250d90c4ad802dd696b20bffa25cad37c55",
+      "candles": 17280
+    }
+  ],
+  "results": [
+    {
+      "strategy": "ema_crossover",
+      "symbol": "BTCUSD",
+      "resolution": "5m",
+      "candles": 17280,
+      "evaluation_start": 1787165100,
+      "evaluation_end": 1792273800,
+      "starting_equity": 10000,
+      "final_equity": 8854.658246,
+      "return_pct": -11.453,
+      "max_drawdown_pct": 11.654,
+      "buy_hold_spot_return_pct": 18.446,
+      "fee_bps_per_side": 5,
+      "slippage_bps_per_side": 2,
+      "fees_paid": 686.4488,
+      "slippage_cost": 274.5795,
+      "rejected_entries": 210,
+      "analytics": {
+        "trades": 221,
+        "wins": 29,
+        "losses": 192,
+        "win_rate": 13.1,
+        "total_pnl": -1145.36,
+        "avg_win": 27.88,
+        "avg_loss": -10.18,
+        "profit_factor": 0.41,
+        "avg_r": -0.04,
+        "best": 94.54,
+        "worst": -52.5,
+        "by_reason": {
+          "strategy": 216,
+          "TP": 3,
+          "SL": 1,
+          "backtest": 1
+        },
+        "by_symbol": {
+          "BTCUSD": -1145.36
+        },
+        "by_strategy": {
+          "ema_crossover": {
+            "trades": 221,
+            "wins": 29,
+            "losses": 192,
+            "win_rate": 13.1,
+            "total_pnl": -1145.36,
+            "profit_factor": 0.41,
+            "avg_r": -0.04
+          }
+        }
+      },
+      "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
+      "sample": "full",
+      "strategy_params": {
+        "fast": 9,
+        "mid": 20,
+        "trend": 200
+      },
+      "sample_note": "Historical estimate; forward validation required"
+    },
+    {
+      "strategy": "ema_crossover",
+      "symbol": "BTCUSD",
+      "resolution": "5m",
+      "candles": 17280,
+      "evaluation_start": 1790718600,
+      "evaluation_end": 1792273800,
+      "starting_equity": 10000,
+      "final_equity": 9616.562585,
+      "return_pct": -3.834,
+      "max_drawdown_pct": 3.934,
+      "buy_hold_spot_return_pct": -2.836,
+      "fee_bps_per_side": 5,
+      "slippage_bps_per_side": 2,
+      "fees_paid": 220.0099,
+      "slippage_cost": 88.004,
+      "rejected_entries": 57,
+      "analytics": {
+        "trades": 68,
+        "wins": 8,
+        "losses": 60,
+        "win_rate": 11.8,
+        "total_pnl": -383.43,
+        "avg_win": 22.16,
+        "avg_loss": -9.35,
+        "profit_factor": 0.32,
+        "avg_r": -0.05,
+        "best": 38.37,
+        "worst": -29.44,
+        "by_reason": {
+          "strategy": 67,
+          "backtest": 1
+        },
+        "by_symbol": {
+          "BTCUSD": -383.43
+        },
+        "by_strategy": {
+          "ema_crossover": {
+            "trades": 68,
+            "wins": 8,
+            "losses": 60,
+            "win_rate": 11.8,
+            "total_pnl": -383.43,
+            "profit_factor": 0.32,
+            "avg_r": -0.05
+          }
+        }
+      },
+      "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
+      "sample": "holdout",
+      "strategy_params": {
+        "fast": 9,
+        "mid": 20,
+        "trend": 200
+      },
+      "sample_note": "Historical estimate; forward validation required"
+    },
+    {
+      "strategy": "ema_crossover",
+      "symbol": "ETHUSD",
+      "resolution": "5m",
+      "candles": 17280,
+      "evaluation_start": 1787165100,
+      "evaluation_end": 1792273800,
+      "starting_equity": 10000,
+      "final_equity": 8951.993867,
+      "return_pct": -10.48,
+      "max_drawdown_pct": 12.036,
+      "buy_hold_spot_return_pct": 13.62,
+      "fee_bps_per_side": 5,
+      "slippage_bps_per_side": 2,
+      "fees_paid": 771.3178,
+      "slippage_cost": 308.5271,
+      "rejected_entries": 194,
+      "analytics": {
+        "trades": 249,
+        "wins": 44,
+        "losses": 205,
+        "win_rate": 17.7,
+        "total_pnl": -1048.01,
+        "avg_win": 32.71,
+        "avg_loss": -12.13,
+        "profit_factor": 0.58,
+        "avg_r": -0.02,
+        "best": 94.83,
+        "worst": -53.49,
+        "by_reason": {
+          "strategy": 236,
+          "TP": 9,
+          "SL": 3,
+          "backtest": 1
+        },
+        "by_symbol": {
+          "ETHUSD": -1048.01
+        },
+        "by_strategy": {
+          "ema_crossover": {
+            "trades": 249,
+            "wins": 44,
+            "losses": 205,
+            "win_rate": 17.7,
+            "total_pnl": -1048.01,
+            "profit_factor": 0.58,
+            "avg_r": -0.02
+          }
+        }
+      },
+      "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
+      "sample": "full",
+      "strategy_params": {
+        "fast": 9,
+        "mid": 20,
+        "trend": 200
+      },
+      "sample_note": "Historical estimate; forward validation required"
+    },
+    {
+      "strategy": "ema_crossover",
+      "symbol": "ETHUSD",
+      "resolution": "5m",
+      "candles": 17280,
+      "evaluation_start": 1790718600,
+      "evaluation_end": 1792273800,
+      "starting_equity": 10000,
+      "final_equity": 9895.542555,
+      "return_pct": -1.045,
+      "max_drawdown_pct": 2.629,
+      "buy_hold_spot_return_pct": -11.324,
+      "fee_bps_per_side": 5,
+      "slippage_bps_per_side": 2,
+      "fees_paid": 235.7418,
+      "slippage_cost": 94.2967,
+      "rejected_entries": 56,
+      "analytics": {
+        "trades": 72,
+        "wins": 13,
+        "losses": 59,
+        "win_rate": 18.1,
+        "total_pnl": -104.46,
+        "avg_win": 37.66,
+        "avg_loss": -10.07,
+        "profit_factor": 0.82,
+        "avg_r": 0.04,
+        "best": 94.63,
+        "worst": -33.05,
+        "by_reason": {
+          "strategy": 68,
+          "TP": 3,
+          "backtest": 1
+        },
+        "by_symbol": {
+          "ETHUSD": -104.46
+        },
+        "by_strategy": {
+          "ema_crossover": {
+            "trades": 72,
+            "wins": 13,
+            "losses": 59,
+            "win_rate": 18.1,
+            "total_pnl": -104.46,
+            "profit_factor": 0.82,
+            "avg_r": 0.04
+          }
+        }
+      },
+      "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
+      "sample": "holdout",
+      "strategy_params": {
+        "fast": 9,
+        "mid": 20,
+        "trend": 200
+      },
+      "sample_note": "Historical estimate; forward validation required"
+    },
+    {
+      "strategy": "ema_crossover",
+      "symbol": "SOLUSD",
+      "resolution": "5m",
+      "candles": 17280,
+      "evaluation_start": 1787165100,
+      "evaluation_end": 1792273800,
+      "starting_equity": 10000,
+      "final_equity": 9343.762998,
+      "return_pct": -6.562,
+      "max_drawdown_pct": 9.504,
+      "buy_hold_spot_return_pct": 23.964,
+      "fee_bps_per_side": 5,
+      "slippage_bps_per_side": 2,
+      "fees_paid": 736.4892,
+      "slippage_cost": 294.5957,
+      "rejected_entries": 189,
+      "analytics": {
+        "trades": 230,
+        "wins": 46,
+        "losses": 184,
+        "win_rate": 20.0,
+        "total_pnl": -656.23,
+        "avg_win": 45.54,
+        "avg_loss": -14.95,
+        "profit_factor": 0.76,
+        "avg_r": 0.01,
+        "best": 95.31,
+        "worst": -54.48,
+        "by_reason": {
+          "strategy": 209,
+          "TP": 17,
+          "SL": 3,
+          "backtest": 1
+        },
+        "by_symbol": {
+          "SOLUSD": -656.23
+        },
+        "by_strategy": {
+          "ema_crossover": {
+            "trades": 230,
+            "wins": 46,
+            "losses": 184,
+            "win_rate": 20.0,
+            "total_pnl": -656.23,
+            "profit_factor": 0.76,
+            "avg_r": 0.01
+          }
+        }
+      },
+      "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
+      "sample": "full",
+      "strategy_params": {
+        "fast": 9,
+        "mid": 20,
+        "trend": 200
+      },
+      "sample_note": "Historical estimate; forward validation required"
+    },
+    {
+      "strategy": "ema_crossover",
+      "symbol": "SOLUSD",
+      "resolution": "5m",
+      "candles": 17280,
+      "evaluation_start": 1790718600,
+      "evaluation_end": 1792273800,
+      "starting_equity": 10000,
+      "final_equity": 9737.27722,
+      "return_pct": -2.627,
+      "max_drawdown_pct": 3.457,
+      "buy_hold_spot_return_pct": -14.26,
+      "fee_bps_per_side": 5,
+      "slippage_bps_per_side": 2,
+      "fees_paid": 199.8066,
+      "slippage_cost": 79.9227,
+      "rejected_entries": 74,
+      "analytics": {
+        "trades": 62,
+        "wins": 9,
+        "losses": 53,
+        "win_rate": 14.5,
+        "total_pnl": -262.72,
+        "avg_win": 44.45,
+        "avg_loss": -12.51,
+        "profit_factor": 0.6,
+        "avg_r": -0.02,
+        "best": 91.97,
+        "worst": -31.21,
+        "by_reason": {
+          "strategy": 58,
+          "TP": 3,
+          "backtest": 1
+        },
+        "by_symbol": {
+          "SOLUSD": -262.72
+        },
+        "by_strategy": {
+          "ema_crossover": {
+            "trades": 62,
+            "wins": 9,
+            "losses": 53,
+            "win_rate": 14.5,
+            "total_pnl": -262.72,
+            "profit_factor": 0.6,
+            "avg_r": -0.02
+          }
+        }
+      },
+      "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
+      "sample": "holdout",
+      "strategy_params": {
+        "fast": 9,
+        "mid": 20,
+        "trend": 200
+      },
+      "sample_note": "Historical estimate; forward validation required"
+    }
+  ]
+}

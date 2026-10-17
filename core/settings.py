@@ -30,6 +30,8 @@ class RiskConfig:
     max_stop_distance_pct: float = 5.0
     max_same_direction_positions: int = 2
     strategy_risk_pct: dict[str, float] = field(default_factory=dict)
+    max_consecutive_losses: int = 3
+    strategy_cooldown_minutes: int = 240
 
     def __post_init__(self):
         numeric = {name: value for name, value in vars(self).items()
@@ -37,7 +39,8 @@ class RiskConfig:
         for name, value in numeric.items():
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"risk.{name} must be a finite positive number")
-        for name in ("max_open_positions", "max_same_direction_positions"):
+        for name in ("max_open_positions", "max_same_direction_positions",
+                     "max_consecutive_losses", "strategy_cooldown_minutes"):
             if not isinstance(getattr(self, name), int):
                 raise ValueError(f"risk.{name} must be an integer")
         for name in ("risk_per_trade_pct", "stop_loss_pct", "max_daily_loss_pct", "max_portfolio_risk_pct"):
@@ -72,6 +75,7 @@ class Settings:
     api_key: str = ""
     api_secret: str = ""
     ai_narrate: bool = True   # AI one-line explanations in the live feed
+    shadow_paper: bool = False
 
     @classmethod
     def load(cls, path: str | Path | None = None, *, mode_override: str | None = None) -> "Settings":
@@ -98,6 +102,7 @@ class Settings:
             api_key=os.getenv("DELTA_API_KEY", "").strip(),
             api_secret=os.getenv("DELTA_API_SECRET", "").strip(),
             ai_narrate=c.get("ai", {}).get("narrate", True),
+            shadow_paper=c.get("execution", {}).get("shadow_paper", False),
         )
         if s.mode == "DELTA_DEMO" and (not s.api_key or not s.api_secret):
             raise RuntimeError(
