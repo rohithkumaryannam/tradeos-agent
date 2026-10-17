@@ -70,6 +70,20 @@ def load_trades() -> list[dict] | None:
         return None
 
 
+def load_state() -> dict | None:
+    """The current runtime-state document. None if Mongo is unavailable
+    (caller should fall back to the local JSON file)."""
+    db = _connect()
+    if db is None:
+        return None
+    try:
+        doc = db.runtime_state.find_one({"_id": "current"}, {"_id": 0})
+        return doc or {}
+    except Exception as e:
+        log.warning("MongoDB state load failed: %s", e)
+        return None
+
+
 def save_state(doc: dict):
     """Upsert the single current runtime-state document."""
     db = _connect()

@@ -18,6 +18,11 @@ _lock = threading.RLock()
 
 
 def load() -> dict:
+    """Prefers MongoDB (survives a redeploy on a host with no persistent
+    disk, e.g. Render); falls back to the local file."""
+    remote = db.load_state()
+    if remote is not None:
+        return remote
     try:
         return json.loads(PATH.read_text())
     except Exception:
