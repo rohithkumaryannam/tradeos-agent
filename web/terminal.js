@@ -82,7 +82,7 @@ renderFeed = function(feed){
  $('feed').innerHTML=html(filtered);$('fullFeed').innerHTML=html(feed||[]);
 };
 $('feedFilter').onchange=()=>renderFeed(last?.feed);
-function terminalCanvas(id){const cv=$(id),dpr=devicePixelRatio||1,w=cv.clientWidth,h=parseFloat(getComputedStyle(cv).height)||Number(cv.getAttribute('height'))||100;cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);return{cv,ctx,w,h};}
+function terminalCanvas(id){const cv=$(id),dpr=devicePixelRatio||1,w=cv.clientWidth,h=parseFloat(getComputedStyle(cv).height)||Number(cv.getAttribute('height'))||100;const pw=Math.round(w*dpr),ph=Math.round(h*dpr);const ctx=cv.getContext('2d');if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph;}else{ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,pw,ph);}ctx.scale(dpr,dpr);return{cv,ctx,w,h};}
 function spark(id,values,color='#2382ff'){
  if(!$(id))return;const {ctx,w,h}=terminalCanvas(id);const vals=values.filter(Number.isFinite);if(vals.length<2)return;
  const lo=Math.min(...vals),hi=Math.max(...vals),rng=hi-lo||1,y=v=>h-4-(v-lo)/rng*(h-8),x=i=>i/(vals.length-1)*w;
