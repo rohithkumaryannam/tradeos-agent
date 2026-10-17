@@ -200,7 +200,7 @@ def test_runner_refuses_overlapping_restart(monkeypatch):
 
 def test_replay_executes_trades_offline_and_accounts_for_fees(tmp_path):
     from run import ReplayClient, backtest
-    s = Settings(strategy_name="ema_crossover", strategy_params={"fast": 3, "mid": 8},
+    s = Settings(strategy_name="ema_crossover", strategy_params={"fast": 3, "mid": 8, "trend": 0},
                  ai_narrate=False, trade_log=str(tmp_path / "replay.csv"))
     a = Agent(s, client=ReplayClient(.001))
     data = []

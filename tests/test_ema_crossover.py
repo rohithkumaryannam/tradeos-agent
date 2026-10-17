@@ -1,5 +1,6 @@
-"""Functional tests for the EMA 9/20 crossover strategy (no trend filter) —
-EMA9 crossing EMA20 should fire the matching entry/exit regardless of direction."""
+"""Functional tests for the EMA 9/20 crossover strategy. Most tests disable
+the EMA200 trend filter (trend=0) to isolate the crossover mechanics; a
+dedicated test below covers the filter itself."""
 from strategies.ema_crossover import Strategy
 from strategies.base import Action
 
@@ -31,14 +32,31 @@ def _run(candles, strat):
 
 def test_long_on_cross_up():
     candles = _trend_candles(1000.0, +6, 40)   # clean uptrend -> EMA9 crosses above EMA20
-    actions = _run(candles, Strategy(fast=3, mid=8))
+    actions = _run(candles, Strategy(fast=3, mid=8, trend=0))
     assert Action.ENTER_LONG in actions
 
 
 def test_short_on_cross_down():
     candles = _trend_candles(1000.0, -5, 40)   # clean downtrend -> EMA9 crosses below EMA20
-    actions = _run(candles, Strategy(fast=3, mid=8))
+    actions = _run(candles, Strategy(fast=3, mid=8, trend=0))
     assert Action.ENTER_SHORT in actions
+
+
+def test_cross_against_trend_is_filtered():
+    # price keeps falling throughout -> stays well below EMA200, so the one
+    # up-cross this produces is against the trend and must be skipped.
+    vals = [1000.0] * 10
+    p = 1000.0
+    for _ in range(30):
+        p -= 4
+        vals.append(p)
+    for _ in range(5):
+        p += 6
+        vals.append(p)
+    candles = [{"time": 1_700_000_000 + i * 300, "open": v, "high": v + 1,
+               "low": v - 1, "close": v, "volume": 10} for i, v in enumerate(vals)]
+    actions = _run(candles, Strategy(fast=3, mid=8, trend=20))
+    assert Action.ENTER_LONG not in actions
 
 
 def test_exit_fires_on_opposite_cross():
@@ -53,11 +71,11 @@ def test_exit_fires_on_opposite_cross():
         vals.append(p)
     candles = [{"time": 1_700_000_000 + i * 300, "open": v, "high": v + 1,
                "low": v - 1, "close": v, "volume": 10} for i, v in enumerate(vals)]
-    actions = _run(candles, Strategy(fast=3, mid=8))
+    actions = _run(candles, Strategy(fast=3, mid=8, trend=0))
     assert Action.ENTER_SHORT in actions
     assert Action.EXIT in actions
 
 
 def test_ema_crossover_holds_while_warming_up():
     candles = _trend_candles(1000.0, +6, 2)
-    assert Strategy(fast=9, mid=20).generate(candles, None).action == Action.HOLD
+    assert Strategy(fast=9, mid=20, trend=0).generate(candles, None).action == Action.HOLD
