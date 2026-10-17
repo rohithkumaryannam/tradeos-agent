@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+import math
 
 import yaml
 
@@ -23,12 +24,43 @@ class RiskConfig:
     take_profit_pct: float = 3.0
     max_leverage: int = 5
     max_daily_loss_pct: float = 5.0
+    max_portfolio_risk_pct: float = 3.0
+    max_open_positions: int = 3
+    min_reward_risk: float = 1.5
+    max_stop_distance_pct: float = 5.0
+    max_same_direction_positions: int = 2
+    strategy_risk_pct: dict[str, float] = field(default_factory=dict)
+
+    def __post_init__(self):
+        numeric = {name: value for name, value in vars(self).items()
+                   if name != "strategy_risk_pct"}
+        for name, value in numeric.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"risk.{name} must be a finite positive number")
+        for name in ("max_open_positions", "max_same_direction_positions"):
+            if not isinstance(getattr(self, name), int):
+                raise ValueError(f"risk.{name} must be an integer")
+        for name in ("risk_per_trade_pct", "stop_loss_pct", "max_daily_loss_pct", "max_portfolio_risk_pct"):
+            if getattr(self, name) >= 100:
+                raise ValueError(f"risk.{name} must be below 100")
+        if not isinstance(self.strategy_risk_pct, dict):
+            raise ValueError("risk.strategy_risk_pct must be a mapping")
+        for strategy, value in self.strategy_risk_pct.items():
+            if (not isinstance(strategy, str) or not strategy or isinstance(value, bool)
+                    or not isinstance(value, (int, float)) or not math.isfinite(value)
+                    or value <= 0 or value > self.risk_per_trade_pct):
+                raise ValueError(
+                    f"risk.strategy_risk_pct.{strategy} must be positive and no greater than risk_per_trade_pct"
+                )
+
+    def risk_for(self, strategy: str | None) -> float:
+        return float(self.strategy_risk_pct.get(strategy, self.risk_per_trade_pct))
 
 
 @dataclass
 class Settings:
     mode: str = "PAPER"
-    symbol: str = "BTCUSD"
+    symbols: list = field(default_factory=lambda: ["BTCUSD"])
     resolution: str = "5m"
     lookback: int = 200
     poll_seconds: int = 30
@@ -42,14 +74,16 @@ class Settings:
     ai_narrate: bool = True   # AI one-line explanations in the live feed
 
     @classmethod
-    def load(cls, path: str | Path = ROOT / "config.yaml") -> "Settings":
-        with open(path, "r") as f:
+    def load(cls, path: str | Path | None = None, *, mode_override: str | None = None) -> "Settings":
+        with open(path or ROOT / "config.yaml", "r") as f:
             c = yaml.safe_load(f)
 
         risk = RiskConfig(**c.get("risk", {}))
+        sym = c["market"]["symbol"]
+        symbols = sym if isinstance(sym, list) else [sym]
         s = cls(
-            mode=c.get("mode", "PAPER").upper(),
-            symbol=c["market"]["symbol"],
+            mode=(mode_override or c.get("mode", "PAPER")).upper(),
+            symbols=symbols,
             resolution=c["market"]["resolution"],
             lookback=c["market"].get("lookback", 200),
             poll_seconds=c["loop"].get("poll_seconds", 30),

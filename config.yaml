@@ -7,30 +7,41 @@ mode: PAPER            # PAPER = simulated fills, no API orders.
                        # DELTA_DEMO = real orders on Delta testnet (needs .env keys).
 
 market:
-  symbol: BTCUSD       # Delta perpetual futures contract symbol
-  resolution: "5m"     # candle timeframe: 1m 3m 5m 15m 30m 1h 2h 4h 1d
+  symbol: [BTCUSD, ETHUSD, SOLUSD]   # trades all listed symbols concurrently,
+                                     # sharing one account's equity/daily cap.
+                                     # A single value (e.g. "BTCUSD") also works.
+  resolution: "1h"     # all four active strategies use completed hourly candles
   lookback: 300        # how many recent candles to pull each cycle
                        # (>=300 so EMA200 is reliable and the full NY range is in view)
 
 loop:
-  poll_seconds: 30     # how often the agent wakes up and evaluates
+  poll_seconds: 5      # how often the agent wakes up and evaluates
 
 # ── Strategy selection ──
 # Points to a file in strategies/.
 strategy:
-  name: combo               # run both strategies at once; each trade is tagged
+  name: combo
   params:
-    subs: [ny_range_fakeout, ema_crossover]
-# Or run a single one directly, e.g.:  name: ny_range_fakeout, params: { rr: 2.0 }
+    subs: [ny_range_fakeout, ema_crossover, donchian_breakout, time_series_momentum]
 
 # ── Risk engine (applies to every trade) ──
 risk:
   account_equity: 10000.0   # starting equity for PAPER mode (USD)
-  risk_per_trade_pct: 1.0   # % of equity risked per trade (position sizing)
+  risk_per_trade_pct: 0.5   # hard ceiling; each strategy has a lower/equal cap below
   stop_loss_pct: 1.5        # stop-loss distance from entry (%)
   take_profit_pct: 3.0      # take-profit distance from entry (%)
-  max_leverage: 25          # hard leverage cap
-  max_daily_loss_pct: 5.0   # halt trading for the day after this drawdown (%)
+  max_leverage: 3           # account-wide gross exposure ceiling
+  max_daily_loss_pct: 2.0   # halt new entries for the UTC day after this loss
+  max_portfolio_risk_pct: 1.0 # combined entry-to-stop risk across all positions
+  max_open_positions: 2      # account-wide position count limit
+  max_same_direction_positions: 1 # avoid stacking correlated crypto bets
+  min_reward_risk: 1.5       # reject entries offering less than 1.5R
+  max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
+  strategy_risk_pct:         # percent of current account equity per new trade
+    ema_crossover: 0.25
+    ny_range_fakeout: 0.35
+    donchian_breakout: 0.50
+    time_series_momentum: 0.50
 
 logging:
   level: INFO               # DEBUG INFO WARNING ERROR

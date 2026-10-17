@@ -1,148 +1,138 @@
-# TradeOS — BTC Futures Trading Bot + Dashboard
+# TradeOS — multi-market trading workspace
 
-An autonomous BTC perpetual-futures trading bot for **Delta Exchange** with a
-live **web dashboard**. It pulls candles, analyzes the chart (EMA + RSI), sizes
-trades through a risk engine, and takes **entries and exits automatically** — in
-paper mode (simulated) or on the Delta **demo/testnet** (real orders, play money).
+A Python trading engine and browser dashboard for **paper trading and Delta
+Exchange testnet**. BTC, ETH, and SOL share one account-level risk budget, with
+independent strategy instances and positions. Production trading is not enabled.
 
-Everything is controllable from the dashboard: **Paper ⇄ Delta Demo**,
-**Auto ⇄ Manual** execution, start/stop, and one-click confirm of pending trades.
-
-![layout](docs-screenshot-placeholder)
-
----
-
-## Quick start — the dashboard
+## Run
 
 ```bash
 pip install -r requirements.txt
 python server.py
-# open http://127.0.0.1:8000
+# http://127.0.0.1:8000
 ```
 
-Then: pick **Paper**, click **Start Bot**. The chart, equity curve, position
-panel, risk status, trade history and live feed all update every second.
+Start in **Paper**. Choose a strategy, then use **Run one cycle** or **Start Bot**.
+For Delta Demo, configure testnet credentials using `.env.example`. Credentials
+stay on the server. Set `TRADEOS_TOKEN` when deploying beyond localhost. Run a
+single server worker: runtime positions and execution locks are process-local.
 
-For **Delta Demo** (real testnet orders): `cp .env.example .env`, paste your
-testnet API key/secret, then flip the mode toggle to **Delta Demo** in the UI.
-Get testnet keys at https://testnet.delta.exchange → Settings → API Keys.
+## Workspace
 
-### Headless / CLI (no dashboard)
+- Account equity, realized daily P&L, unrealized P&L, and gross exposure.
+- Selectable markets with candlestick, EMA, RSI, position, and protection views.
+- Portfolio stop-risk and leverage utilization, position slots, daily loss budget.
+- Per-market candle freshness, latest decision, execution issues, and cycle timing.
+- Trade journal with market filters and CSV export of the displayed history
+  (up to 100 completed trades). Performance covers up to 500 completed trades.
+- Manual signal confirmation with expiration; visible errors for failed controls.
+- Optional Gemini commentary and analysis; AI does not place orders.
+
+**Pause new entries** keeps position management active while the loop is running.
+**Stop** stops the whole loop after its current cycle, including local protection.
+Exchange-confirmed brackets run on Delta independently. The dashboard's feed
+indicator describes its WebSocket connection; market cards separately report
+candle freshness. Pause state and desired run state survive server restarts.
+
+## Risk and execution
+
+Configure `risk` in `config.yaml`:
+
+| Setting | Meaning |
+| --- | --- |
+| `risk_per_trade_pct` | Maximum entry-to-stop risk for one trade |
+| `max_portfolio_risk_pct` | Combined entry-to-stop risk budget; default 3% |
+| `max_open_positions` | Maximum concurrent positions; default 3 |
+| `max_leverage` | Combined gross notional / equity ceiling |
+| `max_daily_loss_pct` | Realized loss cap, resetting at UTC midnight |
+| `stop_loss_pct`, `take_profit_pct` | Default bracket distances |
+
+Sizing uses the remaining portfolio budgets. Non-finite prices, incorrect
+bracket direction, partial brackets, and unknown contract specifications reject
+entries. Entry-to-stop risk is a sizing estimate; gaps, fees, funding, slippage,
+and unrealized losses are not included in that budget.
+
+Stale candles and expired manual signals cannot open positions. Failed account
+or position reads block Delta entries. Unreconciled positions, missing exchange
+protection, or unresolved order submissions also block new entries. A market's
+evaluation failure does not skip other markets' exit management. Repeated polls
+cannot re-enter the same market on the same candle.
+
+Delta entries carry a unique `client_order_id`. An entry failure is **not retried
+as an unprotected market order**: the broker latches an execution issue. Verify
+the order and any position on Delta before restarting; this latch is currently
+process-local. An accepted entry is retained locally even if the subsequent
+bracket-verification request fails. Startup reconciliation adopts existing
+positions; failed reconciliation blocks entries. Order fields follow the
+[Delta API reference](https://docs.delta.exchange/).
+
+## Offline strategy replay
 
 ```bash
-python run.py --backtest data/synthetic.json   # replay test candles
-python run.py --once                            # one live cycle
-python run.py                                   # run the loop forever
+python run.py --backtest data/synthetic.json --symbol BTCUSD \
+  --contract-size 0.001 --fee-bps 5 --report /tmp/tradeos-report.json
 ```
 
----
+Replay always forces paper mode **before agent construction**, clears credentials,
+disables AI, uses a client without order methods, and processes one instrument.
+Set the contract size for the instrument represented by your JSON file. Input is
+an ascending array of candles containing `time` (Unix seconds), `open`, `high`,
+`low`, and `close`, with more than 30 observations.
 
-## How it works
+A replay clock drives signal expiry, journal timestamps, and UTC loss-cap resets.
+Signals use completed bars and fill at the next bar open; stops take precedence
+if a candle hits both brackets. Gap-through stops fill at the opening price. Fees are charged on both entry and exit notionals when closing.
+The default 5 basis points per side is an illustrative assumption, not an exchange
+fee quote. Replay logs go to `logs/backtest.csv`, separate from normal trading.
+Each report excludes earlier replay history. Replay analytics retain all trades in that run; the dashboard history is bounded
+separately.
 
-```
-run.py ─► Agent.step() every poll_seconds:
-          1. fetch candles          (core/delta_client.py)
-          2. open position? check SL/TP → close + book PnL   (core/broker.py)
-          3. strategy signal         (strategies/<name>.py)
-          4. ENTER → risk engine sizes it → broker opens      (core/risk.py)
-          5. EXIT  → broker closes → book PnL
-          every action is written to logs/trades.csv
-```
+The bundled synthetic data is a plumbing check and may produce no trades. Replay
+models configurable adverse slippage (default 2 bps per fill), but not liquidity,
+funding, or exact exchange fill behavior; historical
+results do not establish future profitability.
 
-| File | Role |
-|---|---|
-| `config.yaml` | all tunables — mode, symbol, timeframe, strategy, risk |
-| `.env` | Delta API key/secret (never commit) |
-| `core/settings.py` | loads config + env |
-| `core/delta_client.py` | signed Delta REST client (candles, orders, positions, balance) |
-| `core/indicators.py` | EMA / RSI / ATR, pure Python |
-| `strategies/base.py` | `BaseStrategy` + `Signal` interface |
-| `strategies/ema_crossover.py` | **placeholder** strategy — replace |
-| `core/risk.py` | sizing, SL/TP, leverage cap, daily loss cap |
-| `core/broker.py` | `PaperBroker` (sim) and `DeltaBroker` (testnet) |
-| `core/agent.py` | decision + execution engine, state snapshot for the UI |
-| `strategies/confluence.py` | **built-in** EMA+RSI pullback strategy (default) |
-| `server.py` | FastAPI backend: REST control + WebSocket live push |
-| `web/index.html`, `web/app.js` | the dashboard (canvas charts, no build step) |
-| `run.py` | headless entrypoint (live / `--once` / `--backtest`) |
+## Strategy research lab
 
-## Dashboard features
+Two configurable candidates are installed: **Donchian breakout** and
+**time-series momentum**. Their dashboard cards show fixed-rule historical
+comparisons against the EMA baseline, including losses and drawdown. Selecting
+one requires flat positions and changes its timeframe to 1h. The running
+strategy is never changed by generating a report.
 
-- **Candlestick chart** with EMA 9 / 21 overlay and last-price label
-- **RSI 14** strip with 30/50/70 guides
-- **Equity curve** (filled area)
-- **Open position** card — side, entry, size, SL, TP, notional, live unrealized P&L
-- **Risk panel** — all four controls + daily-cap status (OK / HALTED)
-- **Trade history** table and a **live event feed**
-- **Controls** — Start/Stop, Paper⇄Delta Demo, Auto⇄Manual, Confirm/Dismiss pending, Close position
-
-## Execution modes
-
-- **Auto** — the bot opens and closes positions itself; the dashboard monitors.
-- **Manual** — a signal appears as a highlighted **pending** banner; you click
-  **Confirm Trade** to place it or **Dismiss** to skip. Stop-loss and take-profit
-  always execute automatically even in manual mode, so a position is never left
-  unprotected.
-
----
-
-## Writing your own strategy
-
-1. Copy `strategies/ema_crossover.py` to `strategies/my_strategy.py`.
-2. Set `name = "my_strategy"` and implement `generate()`:
-
-```python
-from core.indicators import rsi, closes
-from strategies.base import BaseStrategy, Signal, Action
-
-name = "my_strategy"
-
-class Strategy(BaseStrategy):
-    def __init__(self, period=14, **kw):
-        super().__init__(period=period, **kw); self.period = period
-
-    def generate(self, candles, position_side):
-        r = rsi(closes(candles), self.period)
-        if r[-1] is None:
-            return Signal(Action.HOLD, "warming up")
-        if position_side is None and r[-1] < 30:
-            return Signal(Action.ENTER_LONG, f"RSI {r[-1]:.0f} oversold")
-        if position_side == "long" and r[-1] > 70:
-            return Signal(Action.EXIT, f"RSI {r[-1]:.0f} overbought")
-        return Signal(Action.HOLD, "")
+```bash
+python research.py --download --days 180
 ```
 
-3. Point `config.yaml` at it:
+Read [the sources, exact rules, costs, and measured results](docs/strategy-research.md).
+The initial comparison did **not** establish two profitable strategies. These
+remain experimental paper/testnet candidates.
 
-```yaml
-strategy:
-  name: my_strategy
-  params: { period: 14 }
+## Strategies and development
+
+`strategies/ema_crossover.py` implements EMA 9/20 crossover signals.
+`strategies/ny_range_fakeout.py` implements the NY range setup.
+`strategies/combo.py` combines strategies. Implement `BaseStrategy.generate()`
+returning a `Signal` to add another strategy. Risk and execution stay in the
+shared engine. Strategy changes require flat positions and clear pending signals.
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+node --check web/app.js
 ```
 
-The strategy only decides **direction**. Position size, stop-loss, take-profit,
-leverage and the daily loss cap are all enforced by the risk engine from
-`config.yaml` — you never hard-code those in the strategy.
+Tests block outbound HTTP, disable AI, and isolate runtime-state files. They cover
+portfolio limits, invalid prices, stale data, manual expiry, pause behavior,
+ambiguous submissions, startup reconciliation, replay, authentication, and runner
+concurrency. The UI uses vanilla JavaScript and canvas; there is no build step.
 
----
+## Before production use
 
-## Risk controls (all in `config.yaml` → `risk:`)
-
-- **`risk_per_trade_pct`** — each trade is sized so the stop-loss costs this % of equity.
-- **`stop_loss_pct` / `take_profit_pct`** — bracket distance from entry.
-- **`max_leverage`** — size is shrunk to stay under this. Hard cap.
-- **`max_daily_loss_pct`** — after this much realized loss in a day, the agent
-  stops opening trades until the next day.
-
----
-
-## Safety notes
-
-- Default mode is `PAPER` — nothing touches an exchange.
-- `DELTA_DEMO` uses the **testnet** base URL and testnet keys only. No real funds.
-- Before pointing this at live markets (not recommended without thorough testing),
-  you'd change the base URL in `core/delta_client.py` and use production keys —
-  do so at your own risk. This is a tool, not financial advice.
-- Verify Delta's current bracket-order fields in `core/broker.py::DeltaBroker.open`
-  against the live API docs; the SL/TP bracket wiring is marked for you to confirm.
-```
+This remains a paper/testnet system. Exact fill/partial-fill reconciliation,
+fee/funding accounting for exchange positions, durable order-intent recovery,
+and persistent daily risk/equity state still need work. Exchange exit P&L may use
+a candle price estimate. The daily loss cap resets on process restart, and the
+legacy CSV journal does not distinguish paper trades from demo trades. Evaluate
+strategies on independent historical data and forward-test on testnet before
+considering a separate production integration.

@@ -7,7 +7,8 @@ so ownership stays coherent. SL/TP, sizing and the daily cap are still enforced 
 the risk engine exactly as for a single strategy.
 
 Select it in config.yaml:
-    strategy: { name: combo, params: { subs: [ny_range_fakeout, ema_crossover] } }
+    strategy: { name: combo, params: { subs: [ny_range_fakeout, ema_crossover,
+                                                donchian_breakout, time_series_momentum] } }
 """
 from __future__ import annotations
 
@@ -16,7 +17,12 @@ from strategies.loader import load_strategy
 
 name = "combo"
 
-_DEFAULT_SUBS = ["ny_range_fakeout", "ema_crossover"]
+_DEFAULT_SUBS = [
+    "ny_range_fakeout",
+    "ema_crossover",
+    "donchian_breakout",
+    "time_series_momentum",
+]
 
 
 class Strategy(BaseStrategy):
@@ -24,6 +30,11 @@ class Strategy(BaseStrategy):
         super().__init__(subs=subs, **kw)
         names = subs or _DEFAULT_SUBS
         self.subs = [(n, load_strategy(n, {})) for n in names]
+        self.closed_candles_only = any(getattr(s, "closed_candles_only", False) for _, s in self.subs)
+        self.required_candles = max(getattr(s, "required_candles", 1) for _, s in self.subs)
+        if self.closed_candles_only:
+            self.preferred_resolution = "1h"
+            self.supported_resolutions = ("1h", "4h", "1d")
         self._owner: str | None = None
 
     def generate(self, candles, position_side):

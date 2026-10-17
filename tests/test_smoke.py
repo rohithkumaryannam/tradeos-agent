@@ -55,6 +55,7 @@ def test_backtest_over_synthetic_is_finite(tmp_path):
         agent.evaluate()
 
     snap = agent.snapshot()
+    assert snap["active_strategies"] == ["ny_range_fakeout"]
     assert isinstance(snap["equity"], float) and snap["equity"] > 0
     assert snap["venue"] == "Paper (simulated fills)"
 
@@ -66,10 +67,10 @@ def test_trade_analytics_and_r_multiple(tmp_path):
     agent = Agent(s)
     # a +2R winner and a -1R loser, both longs, stop $100 away
     agent.trades = [
-        agent._mk_trade({"entry_ts": None, "side": "long", "entry": 50_000,
+        agent._mk_trade("BTCUSD", {"entry_ts": None, "side": "long", "entry": 50_000,
                          "size": 10, "sl": 49_900, "tp": 50_200},
                         None, 50_200, 180.0, "take-profit hit"),
-        agent._mk_trade({"entry_ts": None, "side": "long", "entry": 50_000,
+        agent._mk_trade("BTCUSD", {"entry_ts": None, "side": "long", "entry": 50_000,
                          "size": 10, "sl": 49_900, "tp": 50_200},
                         None, 49_900, -90.0, "stop-loss hit"),
     ]
@@ -85,9 +86,10 @@ def test_snapshot_never_claims_paper_protection_as_verified(tmp_path):
     s.mode = "PAPER"
     s.trade_log = str(tmp_path / "trades.csv")
     agent = Agent(s)
+    m = agent.markets["BTCUSD"]
     plan = agent.risk.size_position("long", 50_000, contract_value=0.001 * 50_000)
-    agent.broker.open(plan)
-    agent.last_candles = [{"open": 50_000, "high": 50_000, "low": 50_000, "close": 50_000}]
-    pos = agent.snapshot()["position"]
+    m.broker.open(plan)
+    m.last_candles = [{"open": 50_000, "high": 50_000, "low": 50_000, "close": 50_000}]
+    pos = agent.snapshot()["markets"]["BTCUSD"]["position"]
     assert pos["protection"] == "local"          # paper is enforced locally
     assert pos["reconciliation"] == "n/a (simulated)"

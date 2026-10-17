@@ -13,8 +13,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import time
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
 
@@ -28,6 +30,7 @@ ENDPOINTS = {
     "balances": "/v2/wallet/balances",
     "products": "/v2/products",
     "tickers": "/v2/tickers",
+    "fills": "/v2/fills",
 }
 
 USER_AGENT = "tradeos-agent/1.0"
@@ -43,6 +46,11 @@ class DeltaClient:
         self.api_secret = api_secret
         self.base_url = base_url.rstrip("/")
         self.session = requests.Session()
+        # Route through a fixed-IP outbound proxy, so Delta sees one stable IP
+        # to whitelist regardless of this machine's own (changing) public IP.
+        proxy_url = os.getenv("DELTA_PROXY_URL", "").strip()
+        if proxy_url:
+            self.session.proxies = {"http": proxy_url, "https": proxy_url}
 
     # ── signing ──
     def _sign(self, method: str, path: str, query: str, body: str) -> dict[str, str]:
@@ -71,7 +79,7 @@ class DeltaClient:
         # Build query string with leading '?' (signed into the prehash).
         query = ""
         if params:
-            query = "?" + "&".join(f"{k}={v}" for k, v in params.items())
+            query = "?" + urlencode(params)
         body_str = json.dumps(body, separators=(",", ":")) if body else ""
 
         headers = {"User-Agent": USER_AGENT, "Content-Type": "application/json"}
@@ -89,7 +97,10 @@ class DeltaClient:
 
         if resp.status_code >= 400:
             raise DeltaError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}")
-        payload = resp.json()
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            raise DeltaError(f"{method} {path}: invalid JSON response") from e
         if isinstance(payload, dict) and payload.get("success") is False:
             raise DeltaError(f"API error: {payload.get('error')}")
         return payload.get("result", payload) if isinstance(payload, dict) else payload
@@ -121,6 +132,17 @@ class DeltaClient:
         res = self._request("GET", ENDPOINTS["positions"], signed=True)
         return res if isinstance(res, list) else [res] if res else []
 
+    def get_orders(self) -> list[dict]:
+        result = self._request("GET", ENDPOINTS["orders"], signed=True)
+        return result if isinstance(result, list) else []
+
+    def get_fills(self, product_ids: int | str | None = None, page_size: int = 50) -> list[dict]:
+        params: dict[str, Any] = {"page_size": min(50, max(1, int(page_size)))}
+        if product_ids is not None:
+            params["product_ids"] = product_ids
+        result = self._request("GET", ENDPOINTS["fills"], params=params, signed=True)
+        return result if isinstance(result, list) else []
+
     def place_order(
         self,
         product_id: int,
@@ -129,19 +151,64 @@ class DeltaClient:
         order_type: str = "market_order",
         limit_price: float | None = None,
         reduce_only: bool = False,
+        bracket_stop_loss_price: float | None = None,
+        bracket_take_profit_price: float | None = None,
+        bracket_stop_trigger_method: str = "last_traded_price",
+        client_order_id: str | None = None,
     ) -> dict:
+        """bracket_stop_loss_price / bracket_take_profit_price: when both are
+        given on an entry order, Delta attaches a real exchange-side bracket
+        (resting stop-loss + take-profit) to the resulting position — per
+        docs.delta.exchange's CreateOrderRequest. This means protection
+        survives even if our own process is down, unlike a bot-side-only
+        watch. trigger method "last_traded_price" matches the candle-close
+        price our own local SL/TP math uses, so the two stay consistent.
+        """
         body: dict = {
             "product_id": product_id,
             "size": size,
             "side": side,
             "order_type": order_type,
         }
+        if client_order_id:
+            body["client_order_id"] = client_order_id
         if order_type == "limit_order" and limit_price is not None:
             body["limit_price"] = str(limit_price)
         if reduce_only:
             body["reduce_only"] = True
+        if bracket_stop_loss_price is not None and bracket_take_profit_price is not None:
+            body["bracket_stop_loss_price"] = str(bracket_stop_loss_price)
+            body["bracket_take_profit_price"] = str(bracket_take_profit_price)
+            body["bracket_stop_trigger_method"] = bracket_stop_trigger_method
         return self._request("POST", ENDPOINTS["orders"], body=body, signed=True)
 
     def cancel_order(self, order_id: int, product_id: int) -> dict:
         body = {"id": order_id, "product_id": product_id}
         return self._request("DELETE", ENDPOINTS["orders"], body=body, signed=True)
+
+    def has_bracket(self, product_id: int) -> bool:
+        """True if a stop_loss_order AND take_profit_order are both resting
+        (state=pending — NOT "open"; a bracket's conditional legs use their
+        own pending state, confirmed by live testing) for this product. More
+        trustworthy than reading bracket_* fields off the entry order's own
+        response, which can echo the request back without confirming the
+        bracket was actually created server-side."""
+        sl, tp = self.get_bracket_prices(product_id)
+        return sl is not None and tp is not None
+
+    def get_bracket_prices(self, product_id: int) -> tuple[float | None, float | None]:
+        """(stop_loss_price, take_profit_price) of the resting bracket legs
+        for this product, or (None, None) if no bracket is attached. Used both
+        to confirm a just-placed bracket and to recover SL/TP on reconnect —
+        e.g. after a server restart — for a position opened before the
+        restart."""
+        orders = self._request("GET", ENDPOINTS["orders"], params={"product_ids": product_id}, signed=True)
+        sl = tp = None
+        for o in (orders or []):
+            if o.get("state") != "pending":
+                continue
+            if o.get("stop_order_type") == "stop_loss_order":
+                sl = float(o["stop_price"])
+            elif o.get("stop_order_type") == "take_profit_order":
+                tp = float(o["stop_price"])
+        return sl, tp

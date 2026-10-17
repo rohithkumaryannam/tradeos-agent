@@ -30,6 +30,10 @@ class Signal:
     # which strategy produced this signal (set by the combo meta-strategy so each
     # trade can be attributed; single strategies leave it None)
     strategy: str | None = None
+    reference_price: float | None = None
+    max_entry_deviation: float | None = None
+    # Explicit opt-in: legacy strategies retain exchange-bracket-only exits.
+    exit_with_bracket: bool = False
 
 
 class BaseStrategy(ABC):

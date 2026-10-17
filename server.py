@@ -18,6 +18,8 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import Optional
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -26,7 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
 from core.settings import Settings
-from core.agent import Agent
+from core.agent import Agent, _RES_SECONDS
 from core import state
 
 logging.basicConfig(level=logging.INFO,
@@ -38,7 +40,14 @@ ROOT = Path(__file__).resolve().parent
 settings = Settings.load()
 agent = Agent(settings)
 
-app = FastAPI(title="TradeOS Dashboard")
+@asynccontextmanager
+async def lifespan(app):
+    _resume_from_state()
+    yield
+    runner._stop.set()
+
+
+app = FastAPI(title="TradeOS Dashboard", lifespan=lifespan)
 
 # ── access control ──
 # If TRADEOS_TOKEN is set, the whole app (dashboard + every API/WS call) requires
@@ -106,30 +115,41 @@ class BotRunner:
         self.agent = agent
         self.running = False
         self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+        self._control = threading.Lock()
 
     def _loop(self):
-        while self.running:
-            try:
-                self.agent.evaluate()
-            except Exception as e:
-                log.error("eval error: %s", e)
-            time.sleep(self.agent.s.poll_seconds)
+        try:
+            while not self._stop.is_set():
+                try:
+                    self.agent.evaluate()
+                except Exception as e:
+                    log.error("eval error: %s", e)
+                self._stop.wait(self.agent.s.poll_seconds)
+        finally:
+            self.running = False
 
     def start(self):
-        if self.running:
-            return
-        self.running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
-        self.agent._feed("bot", "started")
-        state.save(running=True)
-        log.info("bot started")
+        with self._control:
+            if self.running and not self._stop.is_set():
+                return
+            if self._thread and self._thread.is_alive():
+                raise RuntimeError("previous cycle is stopping; wait before restarting")
+            self._stop = threading.Event()
+            self.running = True
+            self._thread = threading.Thread(target=self._loop, daemon=True)
+            self._thread.start()
+            self.agent._feed("bot", "started")
+            state.save(running=True)
+            log.info("bot started")
 
     def stop(self):
-        self.running = False
-        self.agent._feed("bot", "stopped")
-        state.save(running=False)
-        log.info("bot stopped")
+        with self._control:
+            self._stop.set()
+            self.running = False
+            self.agent._feed("bot", "stop requested; current cycle may finish")
+            state.save(running=False)
+            log.info("bot stop requested")
 
 
 runner = BotRunner(agent)
@@ -142,20 +162,24 @@ def _resume_from_state():
     if not st:
         return
     try:
+        if st.get("risk"):
+            agent.update_risk_controls(st["risk"])
         if st.get("strategy"):
             agent.set_strategy(st["strategy"])
+        if st.get("resolution") in _RES_SECONDS:
+            agent.s.resolution = st["resolution"]
+        agent._align_strategy_data()
+        state.save(resolution=agent.s.resolution)
         if st.get("mode"):
             agent.set_mode(st["mode"])
         if "auto" in st:
             agent.set_auto(st["auto"])
+        agent.pause_entries(bool(st.get("entries_paused", False)))
         if st.get("running"):
             runner.start()
             log.info("resumed running state from disk")
     except Exception as e:
         log.warning("could not resume state: %s", e)
-
-
-_resume_from_state()
 
 
 # ── REST ──
@@ -166,7 +190,10 @@ def get_state():
 
 @app.post("/api/bot/start")
 def bot_start():
-    runner.start()
+    try:
+        runner.start()
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
     return {"running": True}
 
 
@@ -174,6 +201,34 @@ def bot_start():
 def bot_stop():
     runner.stop()
     return {"running": False}
+
+
+@app.post("/api/entries/{action}")
+def pause_entries(action: str):
+    if action not in ("pause", "resume"):
+        return JSONResponse({"error": "use pause or resume"}, status_code=400)
+    paused = action == "pause"
+    agent.pause_entries(paused)
+    state.save(entries_paused=paused)
+    return {"entries_paused": paused}
+
+
+@app.post("/api/risk")
+async def set_risk_controls(request: Request):
+    try:
+        values = await request.json()
+        config = agent.update_risk_controls(values)
+        persisted = {
+            key: getattr(config, key) for key in (
+                "max_portfolio_risk_pct", "max_open_positions",
+                "max_same_direction_positions", "max_leverage",
+                "max_daily_loss_pct", "strategy_risk_pct",
+            )
+        }
+        state.save(risk=persisted)
+        return {"risk": persisted}
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.post("/api/mode/{mode}")
@@ -200,37 +255,105 @@ def set_auto(flag: str):
 def set_strategy(name: str):
     try:
         agent.set_strategy(name)
-        state.save(strategy=name)
-        return {"strategy": name}
+        state.save(strategy=name, resolution=agent.s.resolution)
+        return {"strategy": name, "resolution": agent.s.resolution}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
 @app.post("/api/signal/confirm")
-def confirm():
-    return {"result": agent.execute_pending().__dict__}
+def confirm(symbol: Optional[str] = None):
+    return {"result": agent.execute_pending(symbol).__dict__}
 
 
 @app.post("/api/signal/dismiss")
-def dismiss():
-    return {"result": agent.dismiss_pending().__dict__}
+def dismiss(symbol: Optional[str] = None):
+    return {"result": agent.dismiss_pending(symbol).__dict__}
 
 
 @app.post("/api/position/close")
-def close():
-    return {"result": agent.force_close().__dict__}
+def close(symbol: Optional[str] = None):
+    return {"result": agent.force_close(symbol).__dict__}
 
 
 @app.post("/api/evaluate")
 def evaluate_once():
-    """Force one evaluation now (useful when the bot loop is stopped)."""
-    return {"result": agent.evaluate().__dict__}
+    """Force one evaluation cycle, across every symbol, now (useful when the
+    bot loop is stopped)."""
+    return {"result": {sym: o.__dict__ for sym, o in agent.evaluate().items()}}
+
+
+@app.get("/api/chart")
+def chart_data(symbol: str, resolution: str):
+    """Chart timeframe is independent from the trading strategy timeframe."""
+    if symbol not in agent.markets or resolution not in _RES_SECONDS:
+        return JSONResponse({"error": "unknown market or timeframe"}, status_code=400)
+    from core.indicators import ema, rsi, closes
+    try:
+        end = int(time.time())
+        candles = agent.client.get_candles(symbol, resolution,
+                    end - _RES_SECONDS[resolution] * 305, end)
+        prices = closes(candles)
+        fast, slow, trend, strength = ema(prices, 9), ema(prices, 20), ema(prices, 200), rsi(prices, 14)
+        chart = [{"t": c["time"], "o": float(c["open"]), "h": float(c["high"]),
+                  "l": float(c["low"]), "c": float(c["close"]),
+                  "volume": float(c.get("volume") or 0), "ema_fast": fast[i],
+                  "ema_slow": slow[i], "ema_trend": trend[i], "rsi": strength[i]}
+                 for i, c in enumerate(candles)]
+        return {"symbol": symbol, "resolution": resolution, "chart": chart[-160:]}
+    except Exception:
+        return JSONResponse({"error": "Chart feed unavailable; retry shortly"}, status_code=503)
+
+
+@app.get("/api/orders")
+def open_orders():
+    with agent.lock:
+        if agent.s.mode == "PAPER":
+            return {"orders": [], "status": "simulated"}
+        if agent._acct["status"] != "live":
+            return JSONResponse({"error": "Delta account unavailable"}, status_code=503)
+        try:
+            orders = agent.client.get_orders()
+            return {"orders": [{"id": o.get("id"),
+                "symbol": o.get("product_symbol") or (o.get("product") or {}).get("symbol") or str(o.get("product_id")),
+                "side": o.get("side"), "type": o.get("stop_order_type") or o.get("order_type"),
+                "price": o.get("stop_price") or o.get("limit_price"),
+                "size": o.get("size"), "state": o.get("state")}
+                for o in orders if o.get("state") in ("open", "pending")], "status": "live"}
+        except Exception:
+            return JSONResponse({"error": "Could not verify open orders on Delta"}, status_code=503)
+
+
+@app.post("/api/account/retry")
+def retry_account():
+    return agent.retry_account()
 
 
 @app.post("/api/ai/analysis")
-def ai_analysis():
-    """On-demand Gemini read of current chart conditions."""
-    return agent.ai_analysis()
+def ai_analysis(symbol: Optional[str] = None):
+    """On-demand Gemini read of current chart conditions for one symbol."""
+    return agent.ai_analysis(symbol)
+
+
+@app.get("/api/research")
+def strategy_research():
+    path = ROOT / "data" / "strategy_comparison.json"
+    if not path.exists():
+        return {"status": "not_run", "results": [], "warning": "Run research.py to generate a historical comparison."}
+    try:
+        return json.loads(path.read_text())
+    except (ValueError, OSError):
+        return JSONResponse({"error": "research report unavailable"}, status_code=503)
+
+
+@app.get("/api/strategies")
+def strategy_catalog():
+    from strategies.loader import available_strategies, load_strategy
+    return {"strategies": [{"name": name, "params": strategy.params,
+            "resolutions": getattr(strategy, "supported_resolutions", None),
+            "required_candles": getattr(strategy, "required_candles", None)}
+            for name in available_strategies()
+            for strategy in [load_strategy(name, {})]]}
 
 
 # ── WebSocket push ──
@@ -251,11 +374,20 @@ async def ws(socket: WebSocket):
         log.warning("ws closed: %s", e)
 
 
-# ── static dashboard ──
-@app.get("/", response_class=HTMLResponse)
+# Every workspace route serves the same authenticated, live-data application shell.
+UI_ROUTES = (
+    "/", "/dashboard", "/bots", "/bots/new", "/bots/edit", "/markets",
+    "/strategies", "/strategies/builder", "/backtest", "/backtest/results",
+    "/trades", "/journal", "/positions", "/orders", "/risk", "/ai",
+    "/analytics", "/health", "/feed", "/settings",
+)
+
 def index():
     return (ROOT / "web" / "index.html").read_text()
 
+
+for route in UI_ROUTES:
+    app.add_api_route(route, index, response_class=HTMLResponse, methods=["GET"], include_in_schema=False)
 
 app.mount("/static", StaticFiles(directory=str(ROOT / "web")), name="static")
 

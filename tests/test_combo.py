@@ -39,3 +39,10 @@ def test_combo_tags_the_owning_strategy():
     assert sig.strategy == "ny_range_fakeout"
     assert sig.reason.startswith("[ny_range_fakeout]")
     assert sig.stop_loss == 100_200          # structural SL carried through
+
+
+def test_default_combo_includes_every_live_strategy():
+    assert [name for name, _ in Strategy().subs] == [
+        "ny_range_fakeout", "ema_crossover",
+        "donchian_breakout", "time_series_momentum",
+    ]

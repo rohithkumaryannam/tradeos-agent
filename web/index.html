@@ -1,296 +1,85 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TradeOS — BTC Futures</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg:#070b12; --bg2:#0a0f1a;
-    --panel:#0f1624; --panel2:#0b111c; --elevated:#131c2e;
-    --line:#1c2740; --line2:#243150;
-    --txt:#eaf1fb; --mut:#8294b4; --faint:#5d6c88;
-    --accent:#4f8cff; --accent2:#6366f1;
-    --up:#19d08b; --down:#ff4d5e; --warn:#f7b733;
-    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    --sans:"Inter",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    --r:14px;
-    --shadow:0 1px 0 rgba(255,255,255,.03) inset, 0 8px 24px -12px rgba(0,0,0,.6);
-  }
-  *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
-  body{
-    margin:0;color:var(--txt);font-family:var(--sans);font-size:14px;line-height:1.45;
-    background:
-      radial-gradient(1200px 600px at 15% -10%, rgba(79,140,255,.10), transparent 60%),
-      radial-gradient(1000px 500px at 100% 0%, rgba(99,102,241,.08), transparent 55%),
-      var(--bg);
-    background-attachment:fixed;
-    -webkit-font-smoothing:antialiased;
-  }
-  ::-webkit-scrollbar{width:10px;height:10px}
-  ::-webkit-scrollbar-track{background:transparent}
-  ::-webkit-scrollbar-thumb{background:var(--line2);border-radius:999px;border:2px solid transparent;background-clip:padding-box}
-  ::-webkit-scrollbar-thumb:hover{background:#2f3f66;background-clip:padding-box}
-
-  .wrap{max-width:1560px;margin:0 auto;padding:0 20px 28px}
-
-  /* ── top bar ── */
-  .topbar{
-    position:sticky;top:0;z-index:50;
-    margin:0 -20px 20px;padding:14px 20px;
-    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-    background:rgba(8,12,20,.72);
-    backdrop-filter:blur(16px) saturate(140%);
-    -webkit-backdrop-filter:blur(16px) saturate(140%);
-    border-bottom:1px solid var(--line);
-  }
-  .logo{font-weight:800;font-size:21px;letter-spacing:-.4px;display:flex;align-items:center;gap:9px}
-  .logo .mark{
-    width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
-    background:linear-gradient(135deg,var(--accent),var(--accent2));
-    box-shadow:0 4px 14px -4px rgba(79,140,255,.7);
-    font-size:14px;color:#fff;font-weight:800;
-  }
-  .logo b{background:linear-gradient(90deg,#fff,#aecbff);-webkit-background-clip:text;background-clip:text;color:transparent}
-  .logo span{color:var(--accent)}
-
-  .pill{
-    font-family:var(--mono);font-size:11.5px;font-weight:500;
-    padding:6px 11px;border-radius:999px;background:var(--panel);
-    border:1px solid var(--line);color:var(--mut);white-space:nowrap;
-    display:inline-flex;align-items:center;gap:6px;
-  }
-  .pill b{color:var(--txt);font-weight:600}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);position:relative;flex:none}
-  .dot.on{background:var(--up)}
-  .dot.on::after{
-    content:"";position:absolute;inset:-3px;border-radius:50%;
-    background:var(--up);opacity:.5;animation:pulse 1.8s ease-out infinite;
-  }
-  @keyframes pulse{0%{transform:scale(.8);opacity:.6}100%{transform:scale(2.4);opacity:0}}
-  .spacer{flex:1}
-
-  button{
-    font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;
-    border:1px solid var(--line2);background:var(--elevated);color:var(--txt);
-    padding:8px 15px;border-radius:10px;transition:.16s ease;
-  }
-  button:hover{border-color:var(--accent);transform:translateY(-1px)}
-  button:active{transform:translateY(0)}
-  button.primary{
-    background:linear-gradient(135deg,var(--accent),var(--accent2));
-    border-color:transparent;color:#fff;box-shadow:0 6px 18px -6px rgba(79,140,255,.6);
-  }
-  button.primary:hover{box-shadow:0 8px 22px -6px rgba(79,140,255,.8)}
-  button.danger{background:linear-gradient(135deg,#ff4d5e,#e0344a);border-color:transparent;color:#fff;box-shadow:0 6px 18px -6px rgba(255,77,94,.55)}
-  button.ghost{background:transparent;border-color:var(--line2)}
-  button:disabled{opacity:.35;cursor:not-allowed;transform:none;box-shadow:none}
-
-  .toggle{display:inline-flex;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
-  .toggle button{border:0;border-radius:7px;background:transparent;color:var(--mut);padding:6px 13px;font-weight:600;box-shadow:none}
-  .toggle button:hover{transform:none;color:var(--txt)}
-  .toggle button.sel{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;box-shadow:0 4px 12px -4px rgba(79,140,255,.6)}
-  select#stratSelect{font-family:var(--mono);font-size:12px;color:var(--txt);background:var(--panel2);
-    border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer;transition:.15s}
-  select#stratSelect:hover{border-color:var(--accent)}
-
-  /* ── stat tiles ── */
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
-  @media(max-width:760px){.stats{grid-template-columns:repeat(2,1fr)}}
-  .stat{
-    position:relative;overflow:hidden;
-    background:linear-gradient(180deg,var(--panel),var(--panel2));
-    border:1px solid var(--line);border-radius:var(--r);padding:15px 17px;
-    box-shadow:var(--shadow);transition:.18s ease;
-  }
-  .stat:hover{transform:translateY(-2px);border-color:var(--line2)}
-  .stat::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);opacity:.65}
-  .stat.s-eq::before{background:var(--up)}
-  .stat.s-pnl::before{background:var(--warn)}
-  .stat.s-open::before{background:var(--accent2)}
-  .stat .lab{font-size:10.5px;text-transform:uppercase;letter-spacing:1.4px;color:var(--faint);font-weight:600}
-  .stat .num{font-family:var(--mono);font-size:25px;font-weight:700;margin-top:6px;letter-spacing:-.5px}
-  .stat .src{font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:3px;letter-spacing:.3px}
-  .perfgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-  @media(max-width:760px){.perfgrid{grid-template-columns:repeat(2,1fr)}}
-  .perf{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
-  .perf .l{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--faint)}
-  .perf .n{font-family:var(--mono);font-size:18px;font-weight:700;margin-top:3px;letter-spacing:-.3px}
-
-  /* ── layout ── */
-  .grid{display:grid;grid-template-columns:1fr 360px;gap:16px;align-items:start}
-  @media(max-width:1120px){.grid{grid-template-columns:1fr}}
-  .col{display:flex;flex-direction:column;gap:16px}
-
-  .card{
-    position:relative;
-    background:linear-gradient(180deg,var(--panel),var(--panel2));
-    border:1px solid var(--line);border-radius:var(--r);padding:16px;
-    box-shadow:var(--shadow);transition:.18s ease;
-  }
-  .card:hover{border-color:var(--line2)}
-  .card h3{
-    margin:0 0 13px;font-size:11px;text-transform:uppercase;letter-spacing:1.3px;
-    color:var(--mut);font-weight:700;display:flex;align-items:center;gap:8px;
-  }
-  .card h3::before{content:"";width:3px;height:12px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent2))}
-  .card h3 .sub{color:var(--faint);text-transform:none;letter-spacing:0;font-weight:400;font-size:10.5px}
-
-  .row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.04)}
-  .row:last-child{border-bottom:0}
-  .k{color:var(--mut);font-size:13px}
-  .v{font-family:var(--mono);font-weight:600;font-size:13px}
-  .up{color:var(--up)} .down{color:var(--down)} .warn{color:var(--warn)} .mut{color:var(--mut)}
-
-  canvas{width:100%;display:block}
-  .tradingview-widget-container{border-radius:10px;overflow:hidden;border:1px solid var(--line)}
-
-  /* ── pending banner ── */
-  .pending-box{
-    background:linear-gradient(135deg,rgba(247,183,51,.14),rgba(247,183,51,.05));
-    border:1px solid rgba(247,183,51,.45);border-radius:var(--r);
-    padding:14px 16px;margin-bottom:18px;display:none;
-    box-shadow:0 0 0 1px rgba(247,183,51,.1), 0 8px 26px -10px rgba(247,183,51,.3);
-    animation:glowpulse 2.2s ease-in-out infinite;
-  }
-  @keyframes glowpulse{0%,100%{box-shadow:0 0 0 1px rgba(247,183,51,.1),0 8px 26px -12px rgba(247,183,51,.25)}50%{box-shadow:0 0 0 1px rgba(247,183,51,.25),0 10px 30px -10px rgba(247,183,51,.45)}}
-  .pending-box.show{display:block}
-  .pending-box .act{font-family:var(--mono);font-weight:700;font-size:16px;color:var(--warn)}
-
-  /* ── table ── */
-  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px}
-  th{text-align:left;color:var(--faint);font-weight:600;padding:8px 9px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);text-transform:uppercase;letter-spacing:.5px;font-size:10.5px}
-  td{padding:7px 9px;border-bottom:1px solid rgba(255,255,255,.04);color:var(--txt)}
-  tbody tr{transition:.12s}
-  tbody tr:hover{background:rgba(79,140,255,.05)}
-  .tbl-wrap{max-height:300px;overflow:auto;border-radius:8px}
-
-  /* ── feed ── */
-  .feed{max-height:300px;overflow:auto;font-family:var(--mono);font-size:12px;display:flex;flex-direction:column;gap:2px}
-  .feed div{padding:7px 0;border-bottom:1px solid rgba(255,255,255,.04);display:flex;gap:9px;align-items:center}
-  .feed div:last-child{border-bottom:0}
-  .feed .tag{padding:2px 7px;border-radius:5px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;flex:none}
-  .tag.entry{background:rgba(25,208,139,.16);color:var(--up)}
-  .tag.exit{background:rgba(79,140,255,.16);color:var(--accent)}
-  .tag.reject{background:rgba(255,77,94,.16);color:var(--down)}
-  .tag.pending{background:rgba(247,183,51,.16);color:var(--warn)}
-  .tag.mode,.tag.bot{background:rgba(130,148,180,.14);color:var(--mut)}
-  .tag.ai{background:rgba(139,124,255,.18);color:#b3a6ff}
-
-  /* position card badges */
-  .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.5px}
-  .badge.up{background:rgba(25,208,139,.14);color:var(--up)}
-  .badge.down{background:rgba(255,77,94,.14);color:var(--down)}
-  .capchip{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:700}
-  .capchip.up{background:rgba(25,208,139,.14)}
-  .capchip.down{background:rgba(255,77,94,.14)}
-
-  .disclaimer{color:var(--faint);font-size:11px;margin-top:22px;text-align:center;line-height:1.6}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="topbar">
-    <div class="logo"><span class="mark">T</span><b>Trade<span>OS</span></b></div>
-    <div class="pill"><span id="status-dot" class="dot"></span><b id="running">—</b></div>
-    <div class="pill"><span id="feed-dot" class="dot"></span>FEED <b id="feedState">—</b></div>
-    <div class="pill">MODE <b id="mode">—</b></div>
-    <div class="pill">EXEC <b id="execmode">—</b></div>
-    <div class="pill" id="venuePill">VENUE <b id="venueState">—</b></div>
-    <div class="pill" id="sympill">BTCUSD · 5m</div>
-    <select id="stratSelect" title="Active strategy"></select>
-    <div class="spacer"></div>
-    <div class="toggle" id="modeToggle">
-      <button data-mode="PAPER">Paper</button>
-      <button data-mode="DELTA_DEMO">Delta Demo</button>
-    </div>
-    <div class="toggle" id="autoToggle">
-      <button data-auto="true">Auto</button>
-      <button data-auto="false">Manual</button>
-    </div>
-    <button id="startBtn" class="primary">Start Bot</button>
-    <button id="stopBtn" class="ghost">Stop</button>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradeOS — Trading workspace</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/terminal.css?v=3"><link rel="stylesheet" href="/static/pages.css?v=1"></head><body>
+<header class="topbar">
+  <a class="logo" href="#dashboard"><span class="brand-icon">T</span><span>Trade<b>OS</b></span></a>
+  <button class="search-launch" id="searchBtn"><i data-icon="search"></i><span>Search markets, strategies…</span><kbd>⌘ K</kbd></button>
+  <button class="status-chip" id="botStatusBtn" title="Open bot controls"><span id="status-dot" class="dot"></span><span id="running">CONNECTING</span></button>
+  <button id="modeBtn" class="top-control">Delta Demo</button><button id="executionBtn" class="top-control">Auto</button>
+  <select id="symbolSelect" aria-label="Active market"></select><select id="chartResolution" aria-label="Chart timeframe"><option>1m</option><option>5m</option><option>15m</option><option>30m</option><option selected>1h</option><option>4h</option><option>1d</option></select>
+  <select id="stratSelect" aria-label="Active strategy"></select>
+  <div class="header-right"><button class="icon-button" data-open="healthDialog" title="System health"><i data-icon="activity"></i></button><button class="icon-button" data-open="feedDialog" title="Activity notifications"><i data-icon="bell"></i></button><span class="divider"></span><button class="profile" data-open="accountDialog"><span class="avatar">R</span><span>Rohith</span><i data-icon="chevron"></i></button></div>
+</header>
+<aside class="sidebar">
+  <nav aria-label="Main navigation">
+    <button class="nav-item active" data-nav="dashboard"><i data-icon="home"></i><span>Dashboard</span></button>
+    <button class="nav-item" data-open="botsDialog"><i data-icon="bot"></i><span>Bots</span><span class="nav-count" id="botCount">3</span></button>
+    <button class="nav-item" data-open="marketsDialog"><i data-icon="chart"></i><span>Markets</span></button>
+    <button class="nav-item" data-open="strategiesDialog"><i data-icon="nodes"></i><span>Strategies</span></button>
+    <button class="nav-item" data-open="researchDialog"><i data-icon="flask"></i><span>Backtest</span></button>
+    <button class="nav-item" data-open="journalDialog"><i data-icon="history"></i><span>Trade History</span></button>
+    <button class="nav-item" data-focus="positionsCard"><i data-icon="briefcase"></i><span>Positions</span></button>
+    <button class="nav-item" data-focus="ordersCard"><i data-icon="orders"></i><span>Orders</span></button>
+    <button class="nav-item" data-risk><i data-icon="shield"></i><span>Risk Controls</span></button>
+    <button class="nav-item" data-focus="aiCard"><i data-icon="sparkles"></i><span>AI Analysis</span></button>
+    <button class="nav-item" data-open="analyticsDialog"><i data-icon="chart"></i><span>Analytics</span></button>
+    <button class="nav-item" data-open="journalDialog"><i data-icon="book"></i><span>Journal</span></button>
+    <button class="nav-item" data-open="healthDialog"><i data-icon="heart"></i><span>System Health</span></button>
+    <button class="nav-item" data-open="settingsDialog"><i data-icon="settings"></i><span>Settings</span></button>
+  </nav>
+  <div class="sidebar-bottom"><section class="wallet panel"><div class="wallet-heading"><span class="connection-light"></span><div><strong id="walletMode">Delta Demo</strong><small id="walletConnection">Connecting</small></div></div>
+    <dl><div><dt>Equity</dt><dd id="walletEquity">—</dd></div><div><dt>Available</dt><dd id="walletAvailable">—</dd></div><div><dt>Margin used</dt><dd id="walletMargin">—</dd></div><div><dt>Open P&amp;L</dt><dd id="openpnl">—</dd></div></dl>
+    <button id="switchMode" class="wide">Switch to Paper</button></section>
+    <button class="account-card" data-open="accountDialog"><i data-icon="user"></i><span>Account<small id="venueState">Delta testnet</small></span><i data-icon="chevron"></i></button>
   </div>
-
-  <div class="stats">
-    <div class="stat s-price"><div class="lab">Price</div><div class="num" id="price">—</div><div class="src" id="priceSrc">Delta feed</div></div>
-    <div class="stat s-eq"><div class="lab">Equity</div><div class="num" id="equity">—</div><div class="src" id="equitySrc">—</div></div>
-    <div class="stat s-pnl"><div class="lab">Today P&L</div><div class="num" id="todaypnl">—</div></div>
-    <div class="stat s-open"><div class="lab">Open P&L</div><div class="num" id="openpnl">—</div></div>
+</aside>
+<main id="dashboard" class="workspace">
+ <div class="center-column">
+  <div class="overview">
+   <section class="stat market-stat"><div class="stat-label"><span id="heroCoin" class="coin btc">₿</span><span id="heroSymbol">BTCUSD</span></div><strong id="heroPrice">—</strong><span id="heroChange" class="stat-note">Waiting for market data</span><canvas id="priceSpark" height="44" aria-label="Market price trend"></canvas></section>
+   <section class="stat equity-stat"><div class="stat-label">Account Equity</div><strong id="equity">—</strong><span id="equitySrc" class="stat-note">Connecting to account</span><canvas id="equitySpark" height="44" aria-label="Equity trend"></canvas></section>
+   <section class="stat pnl-stat"><div class="stat-label">Today P&amp;L</div><strong id="todaypnl">—</strong><span class="stat-note" id="pnlPercent">Realized · UTC day</span><canvas id="pnlSpark" height="44" aria-label="Daily realized P and L"></canvas></section>
+   <section class="stat slots-stat"><div class="stat-label">Open Positions</div><strong id="slotHeadline">—</strong><span class="stat-note" id="slotsNote">Loading limits</span><progress id="slotProgress" max="100" value="0"></progress></section>
+   <section class="stat exposure-stat"><div class="stat-label">Gross Exposure</div><strong id="grossExposure">—</strong><span id="exposureSrc" class="stat-note">—</span><progress id="exposureProgress" max="100" value="0"></progress></section>
   </div>
-
-  <div id="pendingBox" class="pending-box">
-    <div class="row" style="border:0;padding:0">
-      <div><span class="warn">⚠ PENDING SIGNAL</span> &nbsp;
-        <span class="act" id="pendAct"></span> &nbsp;<span class="mut" id="pendReason"></span></div>
-      <div>
-        <button class="primary" id="confirmBtn">Confirm Trade</button>
-        <button class="ghost" id="dismissBtn">Dismiss</button>
-      </div>
-    </div>
+  <div id="pauseBanner" class="pause-banner" hidden>New entries paused. Existing positions continue to be managed while the bot is running.</div>
+  <div id="ipBanner" class="pause-banner ip-banner" hidden></div>
+  <div id="pendingBox" class="pending-box"><span id="pendSym"></span> <b id="pendAct"></b><span id="pendReason"></span><button class="primary" id="confirmBtn">Confirm trade</button><button id="dismissBtn">Dismiss</button></div>
+  <section class="panel chart-panel" id="chartPanel">
+   <div class="chart-toolbar"><div id="marketsStrip" class="market-tabs"></div><div class="timeframes" id="timeframes"><button data-tf="1m">1m</button><button data-tf="5m">5m</button><button data-tf="15m">15m</button><button data-tf="30m">30m</button><button data-tf="1h" class="selected">1h</button><button data-tf="4h">4h</button><button data-tf="1d">1D</button></div><span class="divider"></span><button id="indicatorsBtn" title="Show or hide EMA lines"><i data-icon="nodes"></i>Indicators</button><div class="chart-actions"><button id="saveChart" title="Download chart PNG" aria-label="Download chart"><i data-icon="camera"></i></button><button id="fullChart" title="Expand chart" aria-label="Expand chart"><i data-icon="expand"></i></button></div></div>
+   <div class="chart-body"><div class="drawing-tools"><button class="selected" id="crosshairTool" title="Crosshair" aria-label="Crosshair"><i data-icon="crosshair"></i></button><button id="trendTool" title="Draw a trend line: click two points" aria-label="Draw trend line"><i data-icon="trend"></i></button><button id="horizontalTool" title="Draw a horizontal line" aria-label="Draw horizontal line"><i data-icon="minus"></i></button><button id="clearDrawings" title="Clear drawings" aria-label="Clear drawings"><i data-icon="trash"></i></button><div class="tool-spacer"></div><button id="resetChart" title="Reset zoom" aria-label="Reset chart zoom"><i data-icon="refresh"></i></button></div>
+    <div class="chart-area"><div class="chart-info"><div><span class="coin btc small">₿</span><b id="chartTitle">Delta BTCUSD</b><span id="chartSource">PERPETUAL · Delta</span><span class="dot on"></span></div><div id="ohlc" class="mono up">Loading candles…</div><div id="indicatorValues" class="indicator-values"></div></div><div id="chartNotice" class="chart-notice" hidden></div><canvas id="priceChart" height="290" aria-label="Interactive price chart"></canvas><div class="rsi-heading">RSI 14 <span id="rsiValue" class="purple">—</span><span id="rsiSym" hidden></span></div><canvas id="rsi" height="72" aria-label="Relative strength index"></canvas><div id="chartTimes" class="chart-times"></div><div class="chart-footer"><span><span class="live-dot"></span> <span id="chartStatus">Live market data</span></span><span id="chartClock">UTC</span></div></div>
+   </div>
+  </section>
+  <div class="two-up metrics-row">
+   <section class="panel performance-panel"><div class="panel-head"><h3>Performance <span id="perfSub">All trades</span></h3><div id="performanceRange" class="range-tabs"><button data-days="7">7D</button><button data-days="30">30D</button><button data-days="90">90D</button><button class="selected" data-days="0">All</button></div></div><div id="perfGrid" class="perfgrid"></div></section>
+   <section class="panel equity-panel"><div class="panel-head"><h3>Equity Curve</h3><span class="small-tag">Realized equity</span></div><canvas id="eq" height="116" aria-label="Realized account equity"></canvas><div class="axis-caption" id="equityCaption">Recorded during this session</div></section>
   </div>
-
-  <div class="grid">
-    <div class="col">
-      <div class="card">
-        <h3>Price · BINANCE BTCUSDT.P <span class="sub">— Delta isn't on TradingView, closest liquid proxy</span></h3>
-        <div class="tradingview-widget-container" style="height:360px">
-          <div id="tv_chart" style="height:100%"></div>
-        </div>
-        <script src="https://s3.tradingview.com/tv.js"></script>
-        <script>
-          new TradingView.widget({
-            autosize: true,
-            symbol: "BINANCE:BTCUSDT.P",
-            interval: "5",
-            timezone: "Etc/UTC",
-            theme: "dark",
-            style: "1",
-            locale: "en",
-            toolbar_bg: "#0f1624",
-            enable_publishing: false,
-            allow_symbol_change: true,
-            studies: ["Volume@tv-basicstudies", "MAExp@tv-basicstudies", "MAExp@tv-basicstudies", "RSI@tv-basicstudies"],
-            container_id: "tv_chart"
-          });
-        </script>
-      </div>
-      <div class="card">
-        <h3>RSI 14</h3>
-        <canvas id="rsi" height="90"></canvas>
-      </div>
-      <div class="card">
-        <h3>Equity Curve</h3>
-        <canvas id="eq" height="120"></canvas>
-      </div>
-      <div class="card">
-        <h3>Performance <span class="sub" id="perfSub"></span></h3>
-        <div class="perfgrid" id="perfGrid"></div>
-      </div>
-
-      <div class="card">
-        <h3>Trade History</h3>
-        <div class="tbl-wrap">
-          <table id="trades"><thead><tr>
-            <th>Exit</th><th>Strategy</th><th>Side</th><th>Entry</th><th>Exit px</th><th>Size</th><th>PnL</th><th>R</th><th>Hold</th><th>Reason</th>
-          </tr></thead><tbody></tbody></table>
-        </div>
-      </div>
-    </div>
-
-    <div class="col">
-      <div class="card">
-        <h3>Delta Account <span class="sub" id="acctState"></span></h3>
-        <div id="acctBody" class="mut" style="padding:8px 0">Switch to Delta Demo to load your testnet account.</div>
-      </div>
-
-      <div class="card">
-        <h3>Open Position</h3>
-        <div id="posEmpty" class="mut" style="padding:12px 0">Flat — no open position</div>
+  <div class="two-up tables-row">
+   <section class="panel" id="ordersCard"><div class="panel-head"><h3>Open Orders <span id="orderCount">—</span></h3><button id="refreshOrders" class="text-button">Refresh</button></div><div class="table-scroll"><table><thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Price</th><th>Size</th><th>Status</th></tr></thead><tbody id="openOrders"></tbody></table></div><div id="ordersEmpty" class="empty-state"><i data-icon="orders"></i><strong>Loading orders</strong><span>Checking the active account</span></div></section>
+   <section class="panel"><div class="panel-head"><h3>Recent Trades</h3><button class="text-button" data-open="journalDialog">View All</button></div><div class="table-scroll"><table class="recent-table"><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Exit price</th><th>Size</th><th>P&amp;L</th></tr></thead><tbody id="recentTrades"></tbody></table></div></section>
+  </div>
+  <div class="bottom-row">
+   <section class="panel" id="strategyLab"><div class="panel-head"><h3>Strategy Lab</h3><span id="strategyTimeframe" class="muted">1h signals</span></div><div class="strategy-cards" id="strategyCards"></div></section>
+   <section class="panel ai-panel" id="aiCard"><div class="panel-head"><h3><span class="ai-diamond">✧</span>AI Analysis</h3><span class="muted">Powered by Gemini</span></div><div class="ai-action"><span id="aiPrompt">Analyze market conditions, performance, or risk…</span><button id="aiBtn" class="primary">Analyze Market</button></div><div class="ai-topics"><button data-ai-topic="Market outlook">Market outlook</button><button data-ai-topic="Risk analysis">Risk analysis</button><button data-ai-topic="Strategy review">Strategy review</button></div><div id="aiText" class="ai-result">Select Analyze Market for the current market assessment.</div><span id="aiSym" hidden></span><span id="aiModel" class="muted"></span></section>
+  </div>
+ </div>
+ <aside class="right-column">
+  <section class="panel positions-panel" id="positionsCard"><div class="panel-head"><h3>Open Positions <span id="positionsCount">—</span></h3><button class="text-button" data-open="positionDialog">Details</button></div><div id="positionList"></div></section>
+  <section class="panel quick-trade" id="quickTradeCard"><div class="panel-head"><h3>Trade Confirmation</h3><i data-icon="crosshair"></i></div><form id="quickTradeForm"><div class="segmented"><button type="button" class="selected">Market</button><button type="button" disabled title="Resting limit entries are not supported by the current broker">Limit</button><button type="button" disabled title="Stop entry orders are not supported by the current broker">Stop</button></div><div class="ticket-row"><label>Symbol<select id="tradeSymbol"></select></label><div><span class="field-label">Side</span><div class="segmented side-tabs"><button type="button" data-side="short" class="selected short">Short</button><button type="button" data-side="long">Long</button></div></div></div><label>Size<span class="input-suffix"><input id="tradeSize" type="number" placeholder="Risk-sized" min="1" step="1" required><span>Contracts</span></span></label><div class="ticket-meta"><span>Account exposure cap</span><button type="button" data-risk id="tradeLeverage">3× · Edit</button></div><button type="submit" class="primary wide" id="placeOrder">Review Order</button><dl class="order-estimate"><div><dt>Notional (est.)</dt><dd id="tradeNotional">—</dd></div><div><dt>Stop loss / take profit</dt><dd id="tradeProtection">—</dd></div></dl><p id="tradeBlock" class="ticket-message"></p><p class="muted ticket-footnote">Strategy signal confirmation · all risk controls apply</p></form></section>
+  <section class="panel risk-panel"><div class="panel-head"><h3>Risk Controls</h3><button id="riskControlsBtn" class="text-button">Edit</button></div><dl class="risk-list"><div><dt>Risk per trade</dt><dd id="rRisk">—</dd></div><div><dt>Stop Loss / Take Profit</dt><dd id="rSLTP">—</dd></div><div><dt>Max leverage</dt><dd id="rLev">—</dd></div><div><dt>Max open positions</dt><dd id="positionSlots">—</dd></div><div><dt>Daily loss cap</dt><dd id="rCap">—</dd></div><div><dt>Remaining daily budget</dt><dd id="dailyBudget">—</dd></div><div><dt>Stop-risk budget</dt><dd id="riskBudget">—</dd></div></dl><progress id="riskProgress" max="100" value="0"></progress><div class="risk-status" id="rCapOk">Checking limits…</div><span id="leverageBudget" hidden></span><progress id="leverageProgress" hidden></progress></section>
+  <section class="panel feed-panel"><div class="panel-head"><h3>Live Feed</h3><select id="feedFilter" aria-label="Filter live feed"><option value="">All events</option><option value="entry">Entries</option><option value="exit">Exits</option><option value="reject">Rejected</option><option value="risk">Risk</option></select></div><div id="feed" class="feed"></div></section>
+ </aside>
+</main>
+<footer class="statusbar"><span><span class="dot" id="feed-dot"></span><span id="feedState">CONNECTING</span> · <span id="mode">DELTA_DEMO</span> · <span id="execmode">AUTO</span></span><span id="sympill"></span><span>Trading workspace <span class="muted">/</span> Paper &amp; testnet</span></footer>
+<dialog id="botsDialog"><div class="dialog-head"><h2>Bot controls</h2><button data-close aria-label="Close">×</button></div><p>Control the running strategy engine across all markets.</p><div class="control-actions"><button id="startBtn" class="primary">Start Bot</button><button id="stopBtn">Stop Bot</button><button id="evaluateBtn">Run one cycle</button><button id="pauseBtn">Pause new entries</button></div><div id="botDetails" class="info-box"></div></dialog>
+<dialog id="marketsDialog"><div class="dialog-head"><h2>Markets</h2><button data-close aria-label="Close">×</button></div><p>Select a market to inspect its chart and trade ticket.</p><div id="marketList"></div></dialog>
+<dialog id="strategiesDialog" class="large-dialog"><div class="dialog-head"><h2>Strategy performance</h2><button data-close aria-label="Close">×</button></div><p>Completed trades by strategy. Active strategies share portfolio risk limits.</p><div class="table-scroll"><table id="stratPerf"><thead><tr><th>Strategy</th><th>Risk cap</th><th>Trades</th><th>Win rate</th><th>Net P&amp;L</th><th>Profit factor</th><th>Avg R</th></tr></thead><tbody></tbody></table></div><button data-open="researchDialog">View backtest research</button></dialog>
+<dialog id="journalDialog" class="large-dialog"><div class="dialog-head"><h2>Trade journal</h2><button data-close aria-label="Close">×</button></div><div class="toolbar"><select id="tradeFilter" aria-label="Filter trades by market"><option value="">All markets</option></select><button id="exportBtn">Export CSV</button></div><div class="table-scroll journal-scroll"><table id="trades"><thead><tr><th>Exit (UTC)</th><th>Symbol</th><th>Strategy</th><th>Side</th><th>Entry</th><th>Exit px</th><th>Size</th><th>P&amp;L</th><th>R</th><th>Hold</th><th>Reason</th></tr></thead><tbody></tbody></table></div></dialog>
+<dialog id="positionDialog"><div class="dialog-head"><h2>Position <span id="posSym"></span></h2><button data-close aria-label="Close">×</button></div><div id="posEmpty" class="mut" style="padding:12px 0">Flat — no open position</div>
         <div id="posBox" style="display:none">
           <div class="row"><span class="k">Side</span><span class="v" id="pSide"></span></div>
           <div class="row"><span class="k">Entry</span><span class="v" id="pEntry"></span></div>
@@ -303,34 +92,53 @@
           <div class="row"><span class="k">Reconcile</span><span class="v mut" id="pRecon"></span></div>
           <button class="danger" id="closeBtn" style="width:100%;margin-top:12px">Close Position</button>
         </div>
-      </div>
-
-      <div class="card">
-        <h3>Risk Controls</h3>
-        <div class="row"><span class="k">Risk / trade</span><span class="v" id="rRisk"></span></div>
-        <div class="row"><span class="k">Stop / Take</span><span class="v" id="rSLTP"></span></div>
-        <div class="row"><span class="k">Max leverage</span><span class="v" id="rLev"></span></div>
-        <div class="row"><span class="k">Daily loss cap</span><span class="v" id="rCap"></span></div>
-        <div class="row"><span class="k">Cap status</span><span class="v" id="rCapOk"></span></div>
-      </div>
-
-      <div class="card">
-        <h3>AI Analysis <span class="sub" id="aiModel"></span></h3>
-        <div id="aiText" class="mut" style="font-size:12.5px;line-height:1.55;min-height:20px">Click Analyze for a Gemini read of current conditions.</div>
-        <button id="aiBtn" class="ghost" style="width:100%;margin-top:10px">Analyze with AI</button>
-      </div>
-
-      <div class="card">
-        <h3>Live Feed</h3>
-        <div class="feed" id="feed"></div>
-      </div>
+      </dialog>
+<dialog id="healthDialog"><div class="dialog-head"><h2>System health</h2><button data-close aria-label="Close">×</button></div><p id="cycleTime">Awaiting cycle</p><div id="marketHealth" class="health-list"></div><p>Pause entries keeps exits active. Stop Bot halts the loop, including local protection.</p></dialog>
+<dialog id="accountDialog"><div class="dialog-head"><h2>Delta account <span id="acctState"></span></h2><button data-close aria-label="Close">×</button></div><div id="acctBody"></div></dialog>
+<dialog id="settingsDialog"><div class="dialog-head"><h2>Workspace settings</h2><button data-close aria-label="Close">×</button></div><h3>Trading venue</h3><div id="modeToggle" class="segmented"><button data-mode="PAPER">Paper</button><button data-mode="DELTA_DEMO">Delta Demo</button></div><h3>Execution</h3><div id="autoToggle" class="segmented"><button data-auto="true">Auto</button><button data-auto="false">Manual confirmation</button></div><p>Strategy timeframe remains independent of the chart timeframe. Venue changes require flat positions.</p><button data-risk>Manage risk limits</button></dialog>
+<dialog id="analyticsDialog"><div class="dialog-head"><h2>Portfolio analytics</h2><button data-close aria-label="Close">×</button></div><div id="analyticsDetails"></div></dialog>
+<dialog id="feedDialog"><div class="dialog-head"><h2>Activity</h2><button data-close aria-label="Close">×</button></div><div id="fullFeed" class="feed"></div></dialog>
+<dialog id="researchDialog" class="large-dialog"><div class="dialog-head"><h2>Strategy research</h2><button data-close aria-label="Close">×</button></div><details class="card strategy-lab" open>
+    <summary>Strategy lab · two research candidates</summary>
+    <div class="strategy-options">
+      <article class="strategy-option">
+        <div class="eyebrow">01 / breakout · experimental</div>
+        <h4>Donchian breakout</h4>
+        <p>55-bar channel break with EMA 200 trend confirmation. A 2× ATR stop, 3R target, and 20-bar channel exit. Designed to test sustained trends.</p>
+        <button class="ghost research-select" data-strategy="donchian_breakout">Select Donchian · 1h</button>
+      </article>
+      <article class="strategy-option">
+        <div class="eyebrow">02 / momentum · experimental</div>
+        <h4>Time-series momentum</h4>
+        <p>24 / 72 / 168-bar momentum agreement with EMA 200 confirmation. A 2× ATR stop, 3R target, and an exit when momentum reverses.</p>
+        <button class="ghost research-select" data-strategy="time_series_momentum">Select Momentum · 1h</button>
+      </article>
     </div>
-  </div>
-  <p class="disclaimer">
-    TradeOS is a personal tool for paper/testnet trading. Not financial advice.<br>
-    Verify every order on the exchange. Trading futures carries risk.
-  </p>
-</div>
-<script src="/static/app.js?v=9"></script>
-</body>
-</html>
+    <p class="mut" style="font-size:12px">Selection requires flat positions, changes the chart to 1h, and preserves your execution mode. Signals use completed candles. Both strategies follow trends and can lose together.</p>
+    <div class="toolbar"><h3>Historical comparison · final 30% of data</h3><button id="researchRefresh" class="ghost">Reload report</button></div>
+    <div id="researchNote" role="status">Loading research report…</div>
+    <div id="researchMeta"></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Market</th><th>Strategy</th><th>Net return</th><th>Max drawdown</th><th>Trades</th><th>Profit factor</th></tr></thead><tbody id="researchResults"></tbody></table></div>
+  </details></dialog>
+<dialog id="searchDialog"><div class="dialog-head"><h2>Go to…</h2><button data-close aria-label="Close">×</button></div><input id="searchInput" type="search" placeholder="Search markets, strategies, controls…" aria-label="Search workspace"><div id="searchResults"></div></dialog>
+<dialog id="tradeReview"><div class="dialog-head"><h2>Review market order</h2><button data-close aria-label="Close">×</button></div><div id="tradeReviewBody"></div><p>Submitted at market with stop loss and take profit. The risk engine rechecks your limits at submission.</p><button id="confirmQuickTrade" class="primary wide">Confirm order</button><p id="tradeReviewError" class="down" role="alert"></p></dialog>
+<dialog id="riskDialog">
+  <form id="riskForm">
+    <h2>Risk controls</h2>
+    <p>Changes apply immediately to new entries and persist after restart. Existing exchange orders are not resized.</p>
+    <div class="risk-form-grid">
+      <label class="risk-field">Portfolio stop risk (%)<input id="riskPortfolio" type="number" min="0.1" max="10" step="0.1" required></label>
+      <label class="risk-field">Position slots<input id="riskPositions" type="number" min="1" max="10" step="1" required></label>
+      <label class="risk-field">Same-direction positions<input id="riskDirection" type="number" min="1" max="10" step="1" required></label>
+      <label class="risk-field">Maximum leverage<input id="riskLeverage" type="number" min="1" max="25" step="1" required></label>
+      <label class="risk-field">Daily loss cap (%)<input id="riskDaily" type="number" min="0.1" max="20" step="0.1" required></label>
+      <div class="risk-form-title">Risk per trade by strategy (%)</div>
+      <div id="strategyRiskFields" style="display:contents"></div>
+    </div>
+    <div class="dialog-actions"><button type="button" id="riskCancel" class="ghost">Cancel</button><button type="submit" class="primary">Apply controls</button></div>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden><span id="toastText"></span><button id="toastClose" aria-label="Dismiss notification">×</button></div>
+<script src="/static/app.js?v=22"></script><script src="/static/terminal.js?v=2"></script><script src="/static/pages.js?v=1"></script>
+</body></html>
