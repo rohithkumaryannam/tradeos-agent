@@ -2,7 +2,7 @@
 import pytest
 import requests
 from core.delta_client import DeltaClient
-from core import ai, state
+from core import ai, db, state
 
 
 @pytest.fixture(autouse=True)
@@ -16,3 +16,5 @@ def offline(monkeypatch, tmp_path):
     monkeypatch.setattr(requests.Session, "request", blocked)
     monkeypatch.setattr(ai, "available", lambda: False)
     monkeypatch.setattr(state, "PATH", tmp_path / "runtime_state.json")
+    # A real MONGODB_URI in .env must never make tests hit the live cluster.
+    monkeypatch.setattr(db, "_connect", lambda: None)

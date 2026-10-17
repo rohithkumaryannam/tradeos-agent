@@ -57,6 +57,19 @@ def insert_trade(row: dict):
         log.warning("MongoDB trade insert failed: %s", e)
 
 
+def load_trades() -> list[dict] | None:
+    """All mirrored trade-log rows, oldest first. None if Mongo is unavailable
+    (caller should fall back to the local CSV), [] if Mongo has no rows yet."""
+    db = _connect()
+    if db is None:
+        return None
+    try:
+        return list(db.trades.find({}, {"_id": 0}).sort("ts", 1))
+    except Exception as e:
+        log.warning("MongoDB trade load failed: %s", e)
+        return None
+
+
 def save_state(doc: dict):
     """Upsert the single current runtime-state document."""
     db = _connect()

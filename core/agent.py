@@ -32,7 +32,7 @@ from core.broker import PaperBroker, DeltaBroker
 from core.indicators import ema, rsi, closes
 from core.risk import RiskEngine
 from core.trade_log import TradeLog
-from core import ai
+from core import ai, db
 from strategies.base import Action, Signal
 from strategies.loader import load_strategy, available_strategies
 
@@ -440,32 +440,42 @@ class Agent:
         }
 
     def _load_trades_from_log(self):
-        """Rebuild the completed-trade ledger by pairing ENTRY→EXIT rows in the
-        CSV (per symbol), so history survives restarts. Best-effort; skips
-        malformed rows and rows from a log written before the symbol column
-        existed (they load with symbol '—')."""
-        path = self.s.trade_log
-        if not os.path.exists(path):
-            return
+        """Rebuild the completed-trade ledger by pairing ENTRY→EXIT rows (per
+        symbol), so history survives restarts — including on hosts with an
+        ephemeral filesystem (e.g. Render), where the local CSV resets on
+        every redeploy but MongoDB (if configured) doesn't. Prefers Mongo;
+        falls back to the local CSV. Best-effort; skips malformed rows and
+        rows from a log written before the symbol column existed (they load
+        with symbol '—')."""
+        rows = db.load_trades()
+        if rows is None:
+            path = self.s.trade_log
+            if not os.path.exists(path):
+                return
+            try:
+                with open(path, newline="") as f:
+                    rows = list(csv.DictReader(f))
+            except Exception as e:
+                log.warning("could not load trade history: %s", e)
+                return
         try:
-            with open(path, newline="") as f:
-                pending: dict[str, dict] = {}
-                for row in csv.DictReader(f):
-                    ev = (row.get("event") or "").upper()
-                    sym = row.get("symbol") or next(iter(self.markets), "—")
-                    if ev == "ENTRY":
-                        pending[sym] = {
-                            "entry_ts": row.get("ts"), "side": row.get("side"),
-                            "entry": float(row["price"]), "size": int(float(row["size"])),
-                            "sl": float(row["sl"]) if row.get("sl") else None,
-                            "tp": float(row["tp"]) if row.get("tp") else None,
-                            "strategy": row.get("strategy") or "—",
-                        }
-                    elif ev == "EXIT" and sym in pending:
-                        self.trades.append(self._mk_trade(
-                            sym, pending[sym], row.get("ts"), float(row["price"]),
-                            float(row.get("pnl") or 0), row.get("reason")))
-                        del pending[sym]
+            pending: dict[str, dict] = {}
+            for row in rows:
+                ev = (row.get("event") or "").upper()
+                sym = row.get("symbol") or next(iter(self.markets), "—")
+                if ev == "ENTRY":
+                    pending[sym] = {
+                        "entry_ts": row.get("ts"), "side": row.get("side"),
+                        "entry": float(row["price"]), "size": int(float(row["size"])),
+                        "sl": float(row["sl"]) if row.get("sl") else None,
+                        "tp": float(row["tp"]) if row.get("tp") else None,
+                        "strategy": row.get("strategy") or "—",
+                    }
+                elif ev == "EXIT" and sym in pending:
+                    self.trades.append(self._mk_trade(
+                        sym, pending[sym], row.get("ts"), float(row["price"]),
+                        float(row.get("pnl") or 0), row.get("reason")))
+                    del pending[sym]
             self.trades = self.trades[-self.trade_history_limit:]
             # Preserve unmatched entries across restarts. A live exchange
             # position will be reconciled next; a position already closed by
