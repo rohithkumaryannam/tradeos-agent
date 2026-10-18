@@ -22,6 +22,10 @@ def simulate(agent, candles, warmup=30, fee_bps=5, slippage_bps=2):
     # This marker is set only by run.ReplayClient, never a DeltaClient.
     if agent.s.mode != "PAPER" or not getattr(agent.client, "offline_replay", False):
         raise ValueError("backtest requires PAPER mode and an offline replay client")
+    # A replay can write thousands of rows in seconds — never mirror them
+    # into the shared live Mongo collection (it polluted the real trade
+    # journal before this guard existed).
+    agent.tlog.mirror = False
     if len(agent.markets) != 1 or len(candles) <= warmup + 1:
         raise ValueError("backtest needs one symbol and sufficient candles after warmup")
     if any(not math.isfinite(v) or v < 0 or v >= 10_000 for v in (fee_bps, slippage_bps)):

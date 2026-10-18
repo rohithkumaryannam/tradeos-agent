@@ -13,6 +13,11 @@ FIELDS = ["ts", "event", "side", "price", "size", "sl", "tp",
 class TradeLog:
     def __init__(self, path: str):
         self.path = path
+        # Backtests/replays can write thousands of rows in seconds — never
+        # let them mirror into the shared live Mongo collection. Set False
+        # by whatever constructs a TradeLog for an offline run (see
+        # core/backtest.py), never flip it off for the live server's own log.
+        self.mirror = True
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         if not os.path.exists(path) or os.path.getsize(path) == 0:
             with open(path, "w", newline="") as f:
@@ -47,4 +52,5 @@ class TradeLog:
         row = [ts, event, side, price, size, sl, tp, pnl, equity, reason, strategy, symbol]
         with open(self.path, "a", newline="") as f:
             csv.writer(f).writerow(row)
-        db.insert_trade(dict(zip(FIELDS, row)))
+        if self.mirror:
+            db.insert_trade(dict(zip(FIELDS, row)))

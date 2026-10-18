@@ -283,6 +283,35 @@ def test_replay_executes_trades_offline_and_accounts_for_fees(tmp_path):
         backtest(agent(tmp_path), data)
 
 
+def test_backtest_never_mirrors_trades_into_mongo(tmp_path, monkeypatch):
+    """A replay can write thousands of rows in seconds; it must never reach
+    the shared live Mongo collection (it polluted the real trade journal
+    with ~1800 synthetic rows before this guard existed)."""
+    from core import db
+    from run import ReplayClient, backtest
+    calls = []
+    monkeypatch.setattr(db, "insert_trade", lambda row: calls.append(row))
+    s = Settings(strategy_name="ema_crossover",
+                 strategy_params={"fast": 3, "mid": 8, "trend": 10, "adx_period": 3,
+                                   "atr_period": 3, "confirm_candles": 1,
+                                   "swing_lookback": 3, "adx_threshold": 0,
+                                   "reward_risk": 2.5},
+                 ai_narrate=False, trade_log=str(tmp_path / "replay.csv"))
+    a = Agent(s, client=ReplayClient(.001))
+    data = []
+    price = 100.0
+    for i in range(35):
+        data.append({"time": 1_700_000_000 + i*900, "open": price,
+                     "close": price, "high": price+1, "low": price-1})
+    for i in range(60):
+        price += 0.15
+        data.append({"time": 1_700_000_000 + (35+i)*900, "open": price,
+                     "close": price, "high": price+1, "low": price-1})
+    backtest(a, data, fee_bps=5)
+    assert a.tlog.mirror is False
+    assert calls == []
+
+
 def test_same_candle_does_not_reenter_or_use_preentry_extremes(tmp_path):
     a = agent(tmp_path)
     m = a.markets["BTCUSD"]
