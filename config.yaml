@@ -22,20 +22,17 @@ execution:
   shadow_paper: true   # compare the same signals with simulated fills alongside demo
 
 # ── Strategy selection ──
-# Points to a file in strategies/.
+# Points to a file in strategies/. combo runs every sub-strategy below at
+# once — whichever signals an entry first takes the trade and owns the exit.
+# Each closed trade is tagged with the strategy that took it (see the trade
+# journal's Strategy column and the per-strategy performance table). Each sub
+# always uses its own class defaults (see strategies/ema_crossover.py and
+# strategies/donchian_breakout.py for their tunables) — combo doesn't forward
+# a params block to them.
 strategy:
-  name: ema_crossover
+  name: combo
   params:
-    fast: 9              # fast EMA period
-    mid: 20               # mid EMA period
-    trend: 200             # trend filter EMA period (long only above it, short only below)
-    adx_period: 14          # ADX lookback
-    adx_threshold: 25        # minimum ADX to take a signal (chop filter)
-    confirm_candles: 2        # cross must hold this many closed candles before entry
-    atr_period: 14           # ATR lookback, for the stop-loss distance
-    atr_mult: 1.0             # stop = max(atr_mult * ATR, distance to recent swing)
-    reward_risk: 1.6          # take-profit = reward_risk * stop distance
-    swing_lookback: 10        # candles used for the recent swing low/high
+    subs: [ema_crossover, donchian_breakout]
 
 # ── Risk engine (applies to every trade) ──
 risk:
@@ -54,6 +51,7 @@ risk:
   max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
   strategy_risk_pct:         # percent of current account equity per new trade
     ema_crossover: 0.25
+    donchian_breakout: 0.35
 
 logging:
   level: INFO               # DEBUG INFO WARNING ERROR

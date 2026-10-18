@@ -127,11 +127,14 @@ remain experimental paper/testnet candidates.
 
 ## Strategies and development
 
-`strategies/ema_crossover.py` implements the EMA 9/20 crossover, filtered by
-an EMA200 trend (only takes a cross in the direction of the longer trend).
-It's currently the only active strategy. Implement `BaseStrategy.generate()`
-returning a `Signal` to add another one. Risk and execution stay in the
-shared engine. Strategy changes require flat positions and clear pending signals.
+`strategies/ema_crossover.py` implements the EMA 9/20/200 + ADX crossover
+(trend/chop filtered, ATR-based bracket). `strategies/donchian_breakout.py`
+implements a volume- and ADX-confirmed channel breakout with a trailing
+channel exit. `strategies/combo.py` runs both at once — whichever signals
+first takes the trade and owns its exit; every closed trade is tagged with
+the strategy that took it. Implement `BaseStrategy.generate()` returning a
+`Signal` to add another one. Risk and execution stay in the shared engine.
+Strategy changes require flat positions and clear pending signals.
 
 ```bash
 pip install -r requirements-dev.txt
