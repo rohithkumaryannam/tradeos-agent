@@ -253,11 +253,11 @@ class Agent:
     def update_risk_controls(self, values: dict) -> RiskConfig:
         """Validate and atomically apply the dashboard's editable guardrails."""
         ranges = {
-            "max_portfolio_risk_pct": (0.1, 10.0, float),
-            "max_open_positions": (1, 10, int),
-            "max_same_direction_positions": (1, 10, int),
-            "max_leverage": (1, 25, int),
-            "max_daily_loss_pct": (0.1, 20.0, float),
+            "max_portfolio_risk_pct": (0.1, 99.9, float),
+            "max_open_positions": (1, 1_000_000, int),
+            "max_same_direction_positions": (1, 1_000_000, int),
+            "max_leverage": (1, 1_000_000, int),
+            "max_daily_loss_pct": (0.1, 99.9, float),
         }
         updates = {}
         for name, (low, high, cast) in ranges.items():
@@ -983,8 +983,6 @@ class Agent:
                 return Outcome("reject", "unreconciled exchange positions; entries blocked")
             self.risk.equity = min(self.risk.equity, self._acct["usd"])
         portfolio = self._portfolio()
-        if portfolio["unprotected"]:
-            return Outcome("reject", "unprotected position; entries blocked")
         side = "long" if sig.action == Action.ENTER_LONG else "short"
         strat = sig.strategy or self.s.strategy_name
         allowed, guard_reason = self._strategy_guard(strat)

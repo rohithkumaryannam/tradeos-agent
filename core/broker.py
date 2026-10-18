@@ -223,10 +223,32 @@ class DeltaBroker:
             self._already_closed_on_exchange = False
         else:
             side = "sell" if p.side == "long" else "buy"
-            self.client.place_order(
-                product_id=self.product_id, size=p.size, side=side,
-                order_type="market_order", reduce_only=True,
-            )
+            # A plain market order can get rejected outright with
+            # "out_of_bankruptcy" on a thin/low-margin position (Delta adds a
+            # worst-case-slippage safety margin to market orders that a small
+            # isolated-margin position can't absorb, even though the position
+            # itself is nowhere near its actual bankruptcy price). A
+            # marketable limit order — priced to cross the book immediately —
+            # gets the same effective fill without tripping that check.
+            buffer = max(abs(exit_price) * 0.01, 0.01)
+            limit_price = round(exit_price - buffer if side == "sell" else exit_price + buffer, 6)
+            try:
+                self.client.place_order(
+                    product_id=self.product_id, size=p.size, side=side,
+                    order_type="limit_order", limit_price=limit_price, reduce_only=True,
+                )
+            except DeltaError as e:
+                if "out_of_bankruptcy" not in str(e):
+                    raise
+                # Still rejected even as a marketable limit — widen the
+                # buffer once and retry before giving up (never silently
+                # leave the position open after a stop/target was reached).
+                buffer *= 5
+                limit_price = round(exit_price - buffer if side == "sell" else exit_price + buffer, 6)
+                self.client.place_order(
+                    product_id=self.product_id, size=p.size, side=side,
+                    order_type="limit_order", limit_price=limit_price, reduce_only=True,
+                )
         btc_per_contract = self.contract_size
         move = (exit_price - p.entry) if p.side == "long" else (p.entry - exit_price)
         pnl = move * btc_per_contract * p.size

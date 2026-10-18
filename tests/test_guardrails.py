@@ -165,6 +165,35 @@ def test_reconcile_failure_blocks_entry():
     client.place_order.assert_not_called()
 
 
+def test_close_uses_a_marketable_limit_order_not_a_market_order():
+    """A plain market reduce-only order can be rejected outright with
+    'out_of_bankruptcy' on a thin/low-margin position, even when the
+    position itself is nowhere near its real bankruptcy price (Delta adds a
+    worst-case-slippage safety margin to market orders specifically). Close
+    must use a limit order priced to cross the book immediately instead."""
+    client = broker_client()
+    b = DeltaBroker(client, "BTCUSD")
+    b.open(RiskEngine(RiskConfig()).size_position("short", 100, 1))
+    b.close(102.0)
+    kwargs = client.place_order.call_args.kwargs
+    assert kwargs["order_type"] == "limit_order"
+    assert kwargs["reduce_only"] is True
+    assert kwargs["side"] == "buy"          # buy to close a short
+    assert kwargs["limit_price"] > 102.0    # priced to cross the book and fill
+
+
+def test_close_retries_with_a_wider_buffer_if_still_rejected():
+    client = broker_client()
+    b = DeltaBroker(client, "BTCUSD")
+    b.open(RiskEngine(RiskConfig()).size_position("short", 100, 1))
+    client.place_order.reset_mock()
+    client.place_order.side_effect = [DeltaError("out_of_bankruptcy"), {"id": 1}]
+    b.close(102.0)
+    assert client.place_order.call_count == 2
+    first, second = (c.kwargs["limit_price"] for c in client.place_order.call_args_list)
+    assert second > first                  # widened buffer on retry
+
+
 def test_reconcile_recovers_local_protection_when_exchange_bracket_incomplete(monkeypatch):
     """Delta can silently cancel one bracket leg (e.g. 'out_of_bankruptcy' —
     the computed stop violates margin/liquidation bounds) while the other
