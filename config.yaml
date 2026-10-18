@@ -10,9 +10,10 @@ market:
   symbol: [BTCUSD, ETHUSD, SOLUSD]   # trades all listed symbols concurrently,
                                      # sharing one account's equity/daily cap.
                                      # A single value (e.g. "BTCUSD") also works.
-  resolution: "5m"     # requested live lane: EMA 9/20/200 on five-minute candles
+  resolution: "15m"    # ema_crossover's native timeframe (EMA200 + ADX need this;
+                       # it self-heals to 15m on startup if set to anything else)
   lookback: 300        # how many recent candles to pull each cycle
-                       # (>=300 so EMA200 is reliable and the full NY range is in view)
+                       # (>=212 so EMA200/ADX are warmed up with margin)
 
 loop:
   poll_seconds: 5      # how often the agent wakes up and evaluates
@@ -25,9 +26,16 @@ execution:
 strategy:
   name: ema_crossover
   params:
-    fast: 9
-    mid: 20
-    trend: 200
+    fast: 9              # fast EMA period
+    mid: 20               # mid EMA period
+    trend: 200             # trend filter EMA period (long only above it, short only below)
+    adx_period: 14          # ADX lookback
+    adx_threshold: 25        # minimum ADX to take a signal (chop filter)
+    confirm_candles: 2        # cross must hold this many closed candles before entry
+    atr_period: 14           # ATR lookback, for the stop-loss distance
+    atr_mult: 1.0             # stop = max(atr_mult * ATR, distance to recent swing)
+    reward_risk: 1.6          # take-profit = reward_risk * stop distance
+    swing_lookback: 10        # candles used for the recent swing low/high
 
 # ── Risk engine (applies to every trade) ──
 risk:

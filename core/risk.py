@@ -139,7 +139,10 @@ class RiskEngine:
         reward_distance = abs(tp - entry)
         if stop_distance / entry * 100 > self.cfg.max_stop_distance_pct:
             return reject("stop distance exceeds configured maximum")
-        if reward_distance / stop_distance < self.cfg.min_reward_risk:
+        # tiny tolerance: a strategy that targets exactly the configured
+        # minimum (a common case) shouldn't get rejected by float rounding
+        # noise in its own stop/target arithmetic.
+        if reward_distance / stop_distance < self.cfg.min_reward_risk - 1e-9:
             return reject("reward-to-risk ratio below configured minimum")
 
         risk_usd = min(self.equity * (effective_risk_pct / 100),

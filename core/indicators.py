@@ -63,5 +63,53 @@ def atr(candles: list[dict], period: int = 14) -> list[float | None]:
     return out
 
 
+def adx(candles: list[dict], period: int = 14) -> list[float | None]:
+    """Average Directional Index (Wilder's smoothing) from OHLC candles."""
+    n = len(candles)
+    out: list[float | None] = [None] * n
+    if n <= period * 2:
+        return out
+    trs, plus_dm, minus_dm = [], [], []
+    for i in range(1, n):
+        h, l = float(candles[i]["high"]), float(candles[i]["low"])
+        ph, pl = float(candles[i - 1]["high"]), float(candles[i - 1]["low"])
+        pc = float(candles[i - 1]["close"])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+        up, down = h - ph, pl - l
+        plus_dm.append(up if (up > down and up > 0) else 0.0)
+        minus_dm.append(down if (down > up and down > 0) else 0.0)
+
+    def _wilder_smooth(series: list[float]) -> list[float]:
+        sm = [sum(series[:period])]
+        for v in series[period:]:
+            sm.append(sm[-1] - sm[-1] / period + v)
+        return sm
+
+    tr_s = _wilder_smooth(trs)
+    plus_s = _wilder_smooth(plus_dm)
+    minus_s = _wilder_smooth(minus_dm)
+
+    dx = []
+    for tr_v, p_v, m_v in zip(tr_s, plus_s, minus_s):
+        if tr_v == 0:
+            dx.append(0.0)
+            continue
+        plus_di = 100 * p_v / tr_v
+        minus_di = 100 * m_v / tr_v
+        denom = plus_di + minus_di
+        dx.append(100 * abs(plus_di - minus_di) / denom if denom else 0.0)
+
+    # dx[0] corresponds to candle index `period` (1-based diffs + period warmup)
+    if len(dx) < period:
+        return out
+    adx_val = sum(dx[:period]) / period
+    out[period * 2 - 1] = adx_val
+    for i, dx_v in enumerate(dx[period:], start=period * 2):
+        adx_val = (adx_val * (period - 1) + dx_v) / period
+        if i < n:
+            out[i] = adx_val
+    return out
+
+
 def closes(candles: list[dict]) -> list[float]:
     return [float(c["close"]) for c in candles]
