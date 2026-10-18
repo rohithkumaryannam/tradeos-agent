@@ -69,6 +69,44 @@ def insert_trade(row: dict):
         log.warning("MongoDB trade insert failed: %s", e)
 
 
+def save_position_bracket(symbol: str, doc: dict):
+    """Persist the stop-loss/take-profit WE intended for an open position,
+    keyed by symbol. Exchange-side brackets can be silently partially
+    rejected (e.g. Delta cancelling just the stop-loss leg for violating
+    margin/liquidation bounds) with no further notice; reconcile() falls
+    back to this so the position still gets local (software) protection
+    instead of running naked, and so that protection survives a restart."""
+    db = _connect()
+    if db is None:
+        return
+    try:
+        db.position_brackets.update_one({"_id": symbol}, {"$set": dict(doc)}, upsert=True)
+    except Exception as e:
+        log.warning("MongoDB bracket save failed: %s", e)
+
+
+def load_position_bracket(symbol: str) -> dict | None:
+    db = _connect()
+    if db is None:
+        return None
+    try:
+        doc = db.position_brackets.find_one({"_id": symbol})
+        return doc
+    except Exception as e:
+        log.warning("MongoDB bracket load failed: %s", e)
+        return None
+
+
+def clear_position_bracket(symbol: str):
+    db = _connect()
+    if db is None:
+        return
+    try:
+        db.position_brackets.delete_one({"_id": symbol})
+    except Exception as e:
+        log.warning("MongoDB bracket clear failed: %s", e)
+
+
 def load_trades() -> list[dict] | None:
     """All mirrored trade-log rows, oldest first. None if Mongo is unavailable
     (caller should fall back to the local CSV), [] if Mongo has no rows yet."""

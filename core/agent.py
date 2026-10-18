@@ -600,6 +600,7 @@ class Agent:
             self.trades.append(self._mk_trade(m.symbol, entry, exit_ts, exit_price, pnl, reason))
             self.trades = self.trades[-self.trade_history_limit:]
             m.open_trade = None
+            db.clear_position_bracket(m.symbol)
             self._feed("exit", f"[{m.symbol}] {entry['side'].upper()} @ {exit_price:.1f}  "
                                f"PnL {pnl:+.2f}  ({reason})")
             self.tlog.write("EXIT", side=entry["side"], price=f"{exit_price:.1f}",
@@ -1017,6 +1018,21 @@ class Agent:
             "size": plan.size_contracts, "sl": plan.stop_loss, "tp": plan.take_profit,
             "strategy": strat, "contract_value": cv,
         }
+        # Persist what WE intended as the bracket, independent of whether
+        # Delta actually confirmed it — reconcile() falls back to this if
+        # Delta's resting bracket is missing/incomplete (e.g. a leg gets
+        # silently cancelled for violating margin/liquidation bounds), so
+        # the position keeps local protection even across a restart.
+        db.save_position_bracket(m.symbol, {
+            "side": side, "entry": price,
+            "stop_loss": plan.stop_loss, "take_profit": plan.take_profit,
+        })
+        if isinstance(m.broker, DeltaBroker) and not m.broker.position.bracket_confirmed:
+            self._feed("bracket",
+                       f"[{m.symbol}] Delta did not confirm the exchange bracket for this "
+                       f"entry (a leg may have been rejected, e.g. for violating margin/"
+                       f"liquidation bounds) — falling back to local stop/target protection, "
+                       f"which only works while this process keeps running.")
         self._feed("entry", f"[{m.symbol}/{strat}] {side.upper()} {plan.size_contracts}c @ {price:.1f} "
                             f"SL {plan.stop_loss:.0f} TP {plan.take_profit:.0f}")
         self._narrate(f"Opened {m.symbol} {side.upper()} {plan.size_contracts} contracts @ {price:.1f}, "
@@ -1040,6 +1056,7 @@ class Agent:
                 m.symbol, m.open_trade, self._now(), exit_price, pnl, why))
             self.trades = self.trades[-self.trade_history_limit:]
             m.open_trade = None
+        db.clear_position_bracket(m.symbol)
         self._feed("exit", f"[{m.symbol}] {side.upper()} @ {exit_price:.1f}  PnL {pnl:+.2f}  ({why})")
         self.tlog.write("EXIT", side=side, price=f"{exit_price:.1f}",
                         pnl=f"{pnl:.2f}", equity=f"{self.risk.equity:.2f}", reason=why,

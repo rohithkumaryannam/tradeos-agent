@@ -14,6 +14,7 @@ import uuid
 import math
 from dataclasses import dataclass
 
+from core import db
 from core.delta_client import DeltaClient, DeltaError
 from core.risk import TradePlan
 
@@ -144,11 +145,25 @@ class DeltaBroker:
             sl = tp = None
             self.execution_issue = "bracket reconciliation failed; entries blocked"
             log.warning("could not reconcile %s bracket: %s", self.symbol, e)
+        bracket_confirmed = sl is not None and tp is not None
+        if not bracket_confirmed:
+            # Delta has no (or only a partial) resting bracket for this
+            # position — fall back to whatever stop/target WE originally
+            # intended at entry (persisted in Mongo), so the position still
+            # gets local (software) protection instead of running naked.
+            # Never claim this is an exchange bracket.
+            fallback = db.load_position_bracket(self.symbol)
+            if fallback and abs(float(fallback.get("entry", 0)) - entry) < max(entry * 0.001, 1e-6):
+                sl = sl if sl is not None else fallback.get("stop_loss")
+                tp = tp if tp is not None else fallback.get("take_profit")
+                if sl is not None or tp is not None:
+                    log.warning("%s exchange bracket incomplete; using locally "
+                                "remembered stop/target instead", self.symbol)
         notional = abs(size) * self.contract_size * entry
         self.position = Position(
             side=side, entry=entry, size=int(abs(size)),
             stop_loss=sl, take_profit=tp, notional=notional,
-            bracket_confirmed=sl is not None and tp is not None,
+            bracket_confirmed=bracket_confirmed,
         )
         after = (self.position.side, self.position.size, self.position.entry,
                  self.position.stop_loss, self.position.take_profit)

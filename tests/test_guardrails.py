@@ -165,6 +165,31 @@ def test_reconcile_failure_blocks_entry():
     client.place_order.assert_not_called()
 
 
+def test_reconcile_recovers_local_protection_when_exchange_bracket_incomplete(monkeypatch):
+    """Delta can silently cancel one bracket leg (e.g. 'out_of_bankruptcy' —
+    the computed stop violates margin/liquidation bounds) while the other
+    leg still rests. reconcile() must not just shrug and report the position
+    as fully unprotected forever: it should recover the originally-intended
+    stop/target from core.db's persisted record and still protect it
+    locally, the same way a DELTA_DEMO entry whose bracket Delta never
+    confirmed gets protected."""
+    from core import db
+    monkeypatch.setattr(db, "load_position_bracket", lambda symbol: {
+        "side": "short", "entry": 104.683, "stop_loss": 106.3, "take_profit": 101.5,
+    })
+    client = broker_client()
+    client.get_positions.return_value = [
+        {"product_id": 1, "size": -1, "entry_price": 104.683}
+    ]
+    # Exchange only has the take-profit leg resting; the stop-loss is gone.
+    client.get_bracket_prices.return_value = (None, 101.5)
+    b = DeltaBroker(client, "BTCUSD")
+    assert b.position is not None
+    assert b.position.bracket_confirmed is False
+    assert b.position.stop_loss == 106.3          # recovered from core.db
+    assert b.position.take_profit == 101.5         # Delta's own resting leg kept
+
+
 def test_failed_mode_switch_is_atomic(tmp_path):
     a = agent(tmp_path)
     a.s.api_key = a.s.api_secret = "test"
