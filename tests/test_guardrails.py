@@ -366,23 +366,16 @@ def test_account_circuit_breaker_recovers_and_reconciles_without_error_spam(tmp_
         "restored automatically")
 
 
-def test_strategy_resolution_self_heals_on_startup(tmp_path):
-    settings = Settings(
-        symbols=["BTCUSD"], resolution="1m", strategy_name="combo",
-        strategy_params={"subs": ["ema_crossover", "donchian_breakout"]},
-        ai_narrate=False, trade_log=str(tmp_path / "trades.csv"),
-    )
-    a = Agent(settings)
-    assert a.s.resolution == "1h"
-    assert a.s.lookback >= a.markets["BTCUSD"].strategy.required_candles + 5
+def test_set_strategy_rejects_unknown_name(tmp_path):
+    a = agent(tmp_path)
+    with pytest.raises(RuntimeError, match="unknown strategy"):
+        a.set_strategy("does_not_exist")
 
 
-def test_demo_strategy_change_is_locked_when_positions_are_unknown(tmp_path):
+def test_snapshot_flags_entries_blocked_when_positions_are_unknown(tmp_path):
     a = agent(tmp_path)
     a.s.mode = "DELTA_DEMO"
     a._acct["status"] = "unavailable"
-    with pytest.raises(RuntimeError, match="cannot verify positions"):
-        a.set_strategy("donchian_breakout")
     snapshot = a.snapshot()
     assert snapshot["portfolio"]["known"] is False
     assert snapshot["entry_risk_ok"] is False

@@ -52,9 +52,8 @@ class Outcome:
 @dataclass
 class Market:
     """Per-symbol state: its own broker, strategy instance, candles and
-    pending signal. A strategy instance is NOT shared across symbols because
-    strategies like ny_range_fakeout/combo hold per-symbol state (an armed
-    setup, which sub-strategy owns the open trade, "already traded today")."""
+    pending signal. A strategy instance is NOT shared across symbols because a
+    strategy can hold per-symbol state (an armed setup, "already traded today")."""
     symbol: str
     broker: object = None
     strategy: object = None

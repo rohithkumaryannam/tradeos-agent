@@ -43,7 +43,7 @@ def test_paper_broker_pnl_direction():
 def test_backtest_over_synthetic_is_finite(tmp_path):
     s = Settings()
     s.mode = "PAPER"
-    s.strategy_name = "ny_range_fakeout"
+    s.strategy_name = "ema_crossover"
     s.strategy_params = {}
     s.trade_log = str(tmp_path / "trades.csv")
     agent = Agent(s)
@@ -55,7 +55,7 @@ def test_backtest_over_synthetic_is_finite(tmp_path):
         agent.evaluate()
 
     snap = agent.snapshot()
-    assert snap["active_strategies"] == ["ny_range_fakeout"]
+    assert snap["active_strategies"] == ["ema_crossover"]
     assert isinstance(snap["equity"], float) and snap["equity"] > 0
     assert snap["venue"] == "Paper (simulated fills)"
 

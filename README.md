@@ -127,10 +127,10 @@ remain experimental paper/testnet candidates.
 
 ## Strategies and development
 
-`strategies/ema_crossover.py` implements EMA 9/20 crossover signals.
-`strategies/ny_range_fakeout.py` implements the NY range setup.
-`strategies/combo.py` combines strategies. Implement `BaseStrategy.generate()`
-returning a `Signal` to add another strategy. Risk and execution stay in the
+`strategies/ema_crossover.py` implements the EMA 9/20 crossover, filtered by
+an EMA200 trend (only takes a cross in the direction of the longer trend).
+It's currently the only active strategy. Implement `BaseStrategy.generate()`
+returning a `Signal` to add another one. Risk and execution stay in the
 shared engine. Strategy changes require flat positions and clear pending signals.
 
 ```bash

@@ -67,7 +67,7 @@ class Settings:
     resolution: str = "5m"
     lookback: int = 200
     poll_seconds: int = 30
-    strategy_name: str = "ny_range_fakeout"
+    strategy_name: str = "ema_crossover"
     strategy_params: dict = field(default_factory=dict)
     risk: RiskConfig = field(default_factory=RiskConfig)
     log_level: str = "INFO"

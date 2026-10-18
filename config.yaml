@@ -46,9 +46,6 @@ risk:
   max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
   strategy_risk_pct:         # percent of current account equity per new trade
     ema_crossover: 0.25
-    ny_range_fakeout: 0.35
-    donchian_breakout: 0.50
-    time_series_momentum: 0.50
 
 logging:
   level: INFO               # DEBUG INFO WARNING ERROR

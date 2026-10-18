@@ -21,7 +21,7 @@ from core.settings import Settings, RiskConfig
 from run import ReplayClient
 
 ROOT = Path(__file__).resolve().parent
-CANDIDATES = ("donchian_breakout", "time_series_momentum", "ema_crossover")
+CANDIDATES = ("ema_crossover",)
 PUBLIC_API = "https://api.india.delta.exchange"
 
 

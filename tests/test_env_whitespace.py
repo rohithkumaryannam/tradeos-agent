@@ -13,7 +13,7 @@ def test_delta_credentials_are_stripped_of_whitespace(tmp_path, monkeypatch):
 mode: PAPER
 market: { symbol: BTCUSD, resolution: "5m", lookback: 50 }
 loop: { poll_seconds: 30 }
-strategy: { name: ny_range_fakeout, params: {} }
+strategy: { name: ema_crossover, params: {} }
 risk: { account_equity: 10000.0, risk_per_trade_pct: 1.0, stop_loss_pct: 1.5,
         take_profit_pct: 3.0, max_leverage: 5, max_daily_loss_pct: 5.0 }
 logging: { level: INFO, trade_log: logs/trades.csv }

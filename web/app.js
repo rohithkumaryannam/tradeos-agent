@@ -409,7 +409,7 @@ function renderAnalytics(a) {
     `<div class="perf"><div class="l">${l}</div><div class="n ${c || ""}">${v}</div></div>`).join("");
 }
 
-const STRAT_SHORT = { ny_range_fakeout: "NY fakeout", ema_crossover: "EMA 9/20", combo: "combo", donchian_breakout: "Donchian breakout", time_series_momentum: "Time-series momentum" };
+const STRAT_SHORT = { ema_crossover: "EMA 9/20" };
 
 function renderStrategyPerf(byStrategy, riskCaps, activeStrategies) {
   byStrategy = byStrategy || {}; riskCaps = riskCaps || {};
