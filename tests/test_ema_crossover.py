@@ -1,102 +1,123 @@
-"""Functional tests for the EMA 9/20/200 + ADX crossover strategy. Uses small
-periods (fast/mid/trend/adx/atr) so a clean trend can warm everything up in a
-reasonably small number of synthetic candles."""
+"""Functional tests for the pure EMA 9/20 crossover, stop-and-reverse —
+EMA9 crossing EMA20 should fire the matching entry/exit regardless of
+direction, with no trend/chop filter."""
 from strategies.ema_crossover import Strategy
 from strategies.base import Action
 
 
-def _candles(prices, spread=1.0, start=1_700_000_000, step=900):
-    return [{"time": start + i * step, "open": p, "high": p + spread,
-             "low": p - spread, "close": p, "volume": 10}
-            for i, p in enumerate(prices)]
-
-
-def _trend(start, move, n, flat=25):
-    vals = [start] * flat
+def _trend_candles(start, step, n, flat_warmup=10):
+    vals = [start] * flat_warmup
     p = start
     for _ in range(n):
-        p += move
+        p += step
         vals.append(p)
-    return vals
-
-
-def _choppy(start, n, amp=0.5, flat=25):
-    vals = [start] * flat
-    p = start
-    for i in range(n):
-        p += amp if i % 2 == 0 else -amp
-        vals.append(p)
-    return vals
-
-
-def _strat(**kw):
-    kw.setdefault("fast", 3)
-    kw.setdefault("mid", 5)
-    kw.setdefault("trend", 10)
-    kw.setdefault("adx_period", 3)
-    kw.setdefault("atr_period", 3)
-    kw.setdefault("confirm_candles", 1)
-    kw.setdefault("swing_lookback", 3)
-    kw.setdefault("adx_threshold", 15)
-    return Strategy(**kw)
+    return [{"time": 1_700_000_000 + i * 300, "open": v, "high": v + 1,
+             "low": v - 1, "close": v, "volume": 10} for i, v in enumerate(vals)]
 
 
 def _run(candles, strat):
-    pos, actions, signals = None, [], []
-    for i in range(strat.required_candles, len(candles) + 1):
-        sig = strat.generate(candles[:i], pos)
+    pos, actions = None, []
+    for i in range(10, len(candles)):
+        sig = strat.generate(candles[: i + 1], pos)
         if sig.action != Action.HOLD:
             actions.append(sig.action)
-            signals.append(sig)
         if sig.action == Action.ENTER_LONG:
             pos = "long"
         elif sig.action == Action.ENTER_SHORT:
             pos = "short"
         elif sig.action == Action.EXIT:
             pos = None
-    return actions, signals
+    return actions
 
 
-def test_long_entry_on_confirmed_uptrend_with_bracket():
-    candles = _candles(_trend(1000.0, +8, 40))
-    actions, signals = _run(candles, _strat())
+def test_long_on_cross_up():
+    candles = _trend_candles(1000.0, +6, 40)   # clean uptrend -> EMA9 crosses above EMA20
+    actions = _run(candles, Strategy(fast=3, mid=8))
     assert Action.ENTER_LONG in actions
-    sig = signals[actions.index(Action.ENTER_LONG)]
-    assert sig.stop_loss < sig.take_profit
-    assert sig.stop_loss is not None and sig.take_profit is not None
 
 
-def test_short_entry_on_confirmed_downtrend_with_bracket():
-    candles = _candles(_trend(1000.0, -8, 40))
-    actions, signals = _run(candles, _strat())
+def test_short_on_cross_down():
+    candles = _trend_candles(1000.0, -5, 40)   # clean downtrend -> EMA9 crosses below EMA20
+    actions = _run(candles, Strategy(fast=3, mid=8))
     assert Action.ENTER_SHORT in actions
-    sig = signals[actions.index(Action.ENTER_SHORT)]
-    assert sig.stop_loss > sig.take_profit
 
 
-def test_exit_fires_immediately_on_opposite_cross():
-    vals = [1000.0] * 25
+def test_exit_fires_on_opposite_cross():
+    # downtrend into an uptrend: short entry, then exit on the up-cross
+    vals = [1000.0] * 10
     p = 1000.0
     for _ in range(40):
-        p -= 8
+        p -= 5
         vals.append(p)
     for _ in range(40):
-        p += 9
+        p += 6
         vals.append(p)
-    candles = _candles(vals)
-    actions, _ = _run(candles, _strat())
+    candles = [{"time": 1_700_000_000 + i * 300, "open": v, "high": v + 1,
+               "low": v - 1, "close": v, "volume": 10} for i, v in enumerate(vals)]
+    actions = _run(candles, Strategy(fast=3, mid=8))
     assert Action.ENTER_SHORT in actions
     assert Action.EXIT in actions
 
 
-def test_adx_filter_blocks_entries_in_a_chop():
-    candles = _candles(_choppy(1000.0, 60))
-    actions, _ = _run(candles, _strat(adx_threshold=40))
-    assert Action.ENTER_LONG not in actions
-    assert Action.ENTER_SHORT not in actions
+def test_reverses_into_the_opposite_side_after_exit():
+    # same down-then-up sequence: on the candle where the up-cross exits the
+    # short, re-evaluating that SAME closed candle once flat (exactly what
+    # the live agent does on its next poll tick, before a new candle closes)
+    # must flip it straight into a long.
+    vals = [1000.0] * 10
+    p = 1000.0
+    for _ in range(40):
+        p -= 5
+        vals.append(p)
+    for _ in range(40):
+        p += 6
+        vals.append(p)
+    candles = [{"time": 1_700_000_000 + i * 300, "open": v, "high": v + 1,
+               "low": v - 1, "close": v, "volume": 10} for i, v in enumerate(vals)]
+    strat = Strategy(fast=3, mid=8)
+    pos, actions = None, []
+    for i in range(10, len(candles)):
+        window = candles[: i + 1]
+        sig = strat.generate(window, pos)
+        actions.append(sig.action)
+        if sig.action == Action.ENTER_LONG:
+            pos = "long"
+        elif sig.action == Action.ENTER_SHORT:
+            pos = "short"
+        elif sig.action == Action.EXIT:
+            pos = None
+            # same poll tick, same still-current closed candle, now flat
+            sig2 = strat.generate(window, pos)
+            actions.append(sig2.action)
+            if sig2.action == Action.ENTER_LONG:
+                pos = "long"
+            elif sig2.action == Action.ENTER_SHORT:
+                pos = "short"
+    assert Action.EXIT in actions
+    exit_i = actions.index(Action.EXIT)
+    assert actions[exit_i + 1] == Action.ENTER_LONG
 
 
-def test_holds_while_warming_up():
-    candles = _candles(_trend(1000.0, +8, 5))
-    strat = _strat()
-    assert strat.generate(candles, None).action == Action.HOLD
+def test_no_stop_loss_take_profit_set_by_strategy():
+    """Bracket comes entirely from the risk config's stop_loss_pct/
+    take_profit_pct (1%/2%), not from the strategy."""
+    candles = _trend_candles(1000.0, +6, 40)
+    actions, signals = [], []
+    strat = Strategy(fast=3, mid=8)
+    pos = None
+    for i in range(10, len(candles)):
+        sig = strat.generate(candles[: i + 1], pos)
+        if sig.action != Action.HOLD:
+            actions.append(sig.action)
+            signals.append(sig)
+        if sig.action == Action.ENTER_LONG:
+            pos = "long"
+    assert Action.ENTER_LONG in actions
+    entry_sig = signals[actions.index(Action.ENTER_LONG)]
+    assert entry_sig.stop_loss is None
+    assert entry_sig.take_profit is None
+
+
+def test_ema_crossover_holds_while_warming_up():
+    candles = _trend_candles(1000.0, +6, 2)
+    assert Strategy(fast=9, mid=20).generate(candles, None).action == Action.HOLD

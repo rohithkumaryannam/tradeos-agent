@@ -254,25 +254,21 @@ def test_runner_refuses_overlapping_restart(monkeypatch):
 
 def test_replay_executes_trades_offline_and_accounts_for_fees(tmp_path):
     from run import ReplayClient, backtest
-    s = Settings(strategy_name="ema_crossover",
-                 strategy_params={"fast": 3, "mid": 8, "trend": 10, "adx_period": 3,
-                                   "atr_period": 3, "confirm_candles": 1,
-                                   "swing_lookback": 3, "adx_threshold": 0,
-                                   "reward_risk": 2.5},
+    s = Settings(strategy_name="ema_crossover", strategy_params={"fast": 3, "mid": 8},
                  ai_narrate=False, trade_log=str(tmp_path / "replay.csv"))
     a = Agent(s, client=ReplayClient(.001))
     data = []
     price = 100.0
     for i in range(35):
-        data.append({"time": 1_700_000_000 + i*900, "open": price,
+        data.append({"time": 1_700_000_000 + i*300, "open": price,
                      "close": price, "high": price+1, "low": price-1})
     for i in range(60):
         price += 0.15
-        data.append({"time": 1_700_000_000 + (35+i)*900, "open": price,
+        data.append({"time": 1_700_000_000 + (35+i)*300, "open": price,
                      "close": price, "high": price+1, "low": price-1})
     for i in range(60):
         price -= 0.18
-        data.append({"time": 1_700_000_000 + (95+i)*900, "open": price,
+        data.append({"time": 1_700_000_000 + (95+i)*300, "open": price,
                      "close": price, "high": price+1, "low": price-1})
     report = backtest(a, data, fee_bps=5)
     assert report["analytics"]["trades"] > 0
@@ -291,21 +287,17 @@ def test_backtest_never_mirrors_trades_into_mongo(tmp_path, monkeypatch):
     from run import ReplayClient, backtest
     calls = []
     monkeypatch.setattr(db, "insert_trade", lambda row: calls.append(row))
-    s = Settings(strategy_name="ema_crossover",
-                 strategy_params={"fast": 3, "mid": 8, "trend": 10, "adx_period": 3,
-                                   "atr_period": 3, "confirm_candles": 1,
-                                   "swing_lookback": 3, "adx_threshold": 0,
-                                   "reward_risk": 2.5},
+    s = Settings(strategy_name="ema_crossover", strategy_params={"fast": 3, "mid": 8},
                  ai_narrate=False, trade_log=str(tmp_path / "replay.csv"))
     a = Agent(s, client=ReplayClient(.001))
     data = []
     price = 100.0
     for i in range(35):
-        data.append({"time": 1_700_000_000 + i*900, "open": price,
+        data.append({"time": 1_700_000_000 + i*300, "open": price,
                      "close": price, "high": price+1, "low": price-1})
     for i in range(60):
         price += 0.15
-        data.append({"time": 1_700_000_000 + (35+i)*900, "open": price,
+        data.append({"time": 1_700_000_000 + (35+i)*300, "open": price,
                      "close": price, "high": price+1, "low": price-1})
     backtest(a, data, fee_bps=5)
     assert a.tlog.mirror is False

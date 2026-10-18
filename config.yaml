@@ -10,10 +10,9 @@ market:
   symbol: [BTCUSD, ETHUSD, SOLUSD]   # trades all listed symbols concurrently,
                                      # sharing one account's equity/daily cap.
                                      # A single value (e.g. "BTCUSD") also works.
-  resolution: "15m"    # ema_crossover's native timeframe (EMA200 + ADX need this;
-                       # it self-heals to 15m on startup if set to anything else)
+  resolution: "5m"     # ema_crossover's timeframe (it self-heals to 5m on
+                       # startup if set to anything else)
   lookback: 300        # how many recent candles to pull each cycle
-                       # (>=212 so EMA200/ADX are warmed up with margin)
 
 loop:
   poll_seconds: 5      # how often the agent wakes up and evaluates
@@ -22,24 +21,28 @@ execution:
   shadow_paper: true   # compare the same signals with simulated fills alongside demo
 
 # ── Strategy selection ──
-# Points to a file in strategies/. combo runs every sub-strategy below at
-# once — whichever signals an entry first takes the trade and owns the exit.
-# Each closed trade is tagged with the strategy that took it (see the trade
-# journal's Strategy column and the per-strategy performance table). Each sub
-# always uses its own class defaults (see strategies/ema_crossover.py and
-# strategies/donchian_breakout.py for their tunables) — combo doesn't forward
-# a params block to them.
+# Points to a file in strategies/. Pure EMA 9/20 crossover, stop-and-reverse:
+# a down-cross while long closes the long and immediately flips into a
+# short on the next cycle, and vice versa. No trend/chop filter — every
+# cross is traded.
+#
+# donchian_breakout (15m+ only) isn't run alongside this anymore: it needs a
+# longer timeframe than ema_crossover's 5m, and combo shares one resolution
+# across every sub-strategy, so the two can't run together on 5m. Re-add it
+# with: name: combo, params: { subs: [ema_crossover, donchian_breakout] }
+# (forces the resolution back to 15m).
 strategy:
-  name: combo
+  name: ema_crossover
   params:
-    subs: [ema_crossover, donchian_breakout]
+    fast: 9
+    mid: 20
 
 # ── Risk engine (applies to every trade) ──
 risk:
   account_equity: 10000.0   # starting equity for PAPER mode (USD)
   risk_per_trade_pct: 0.5   # hard ceiling; each strategy has a lower/equal cap below
-  stop_loss_pct: 1.5        # stop-loss distance from entry (%) — every trade still gets one
-  take_profit_pct: 3.0      # take-profit distance from entry (%) — every trade still gets one
+  stop_loss_pct: 1.0        # stop-loss distance from entry (%) — every trade still gets one
+  take_profit_pct: 2.0      # take-profit distance from entry (%) — 1:2 risk:reward
   # Every limit below is lifted (set very high) so the bot can take any number
   # of trades without being blocked — per-trade stop-loss/take-profit above
   # still applies to every single trade regardless.
@@ -54,7 +57,6 @@ risk:
   max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
   strategy_risk_pct:         # percent of current account equity per new trade
     ema_crossover: 0.25
-    donchian_breakout: 0.35
 
 logging:
   level: INFO               # DEBUG INFO WARNING ERROR
