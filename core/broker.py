@@ -222,6 +222,15 @@ class DeltaBroker:
             # — sending another reduce-only order here would be redundant.
             self._already_closed_on_exchange = False
         else:
+            if p.bracket_confirmed:
+                # Closing ourselves (e.g. a strategy-signal exit that
+                # overrides the exchange bracket) while SL/TP orders are
+                # still resting would leave them stranded on the exchange
+                # as stale reduce-only orders. Clear them first.
+                try:
+                    self.client.cancel_bracket_orders(self.product_id)
+                except Exception as e:
+                    log.warning("could not cancel resting bracket for %s: %s", self.symbol, e)
             side = "sell" if p.side == "long" else "buy"
             # A plain market order can get rejected outright with
             # "out_of_bankruptcy" on a thin/low-margin position (Delta adds a

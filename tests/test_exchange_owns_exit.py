@@ -53,6 +53,32 @@ def test_bracket_confirmed_exit_signal_is_ignored(tmp_path, monkeypatch):
     assert "exchange bracket owns the exit" in out.detail
 
 
+def test_exit_with_bracket_flag_overrides_a_confirmed_bracket(tmp_path):
+    """A stop-and-reverse strategy (ema_crossover) sets exit_with_bracket=True
+    on its EXIT signal specifically so the opposite cross always exits —
+    even once an exchange bracket is resting — rather than waiting for the
+    SL/TP it already set to actually be hit."""
+    s = Settings()
+    s.mode = "PAPER"
+    s.trade_log = str(tmp_path / "trades.csv")
+    a = Agent(s)
+    m = a.markets["BTCUSD"]
+    m.broker.position = Position(side="long", entry=50_000, size=1, stop_loss=49_000,
+                                 take_profit=52_000, notional=50, bracket_confirmed=True)
+
+    class _AlwaysExit:
+        def generate(self, candles, position_side):
+            return Signal(Action.EXIT, "opposite cross", exit_with_bracket=True)
+    m.strategy = _AlwaysExit()
+    fake_candles = [{"time": 1, "open": 50_100, "high": 50_200, "low": 50_050,
+                     "close": 50_100, "volume": 1}] * 10
+    a.client.get_candles = lambda *args, **kw: fake_candles
+
+    out = a._evaluate_market(m)
+    assert out.event == "exit"
+    assert m.broker.position is None
+
+
 def test_unconfirmed_bracket_exit_signal_still_fires(tmp_path):
     """Without a confirmed exchange bracket (paper, or an unconfirmed Delta
     entry), the strategy exit must still work — it's the only protection."""

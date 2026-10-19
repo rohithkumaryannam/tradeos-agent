@@ -44,12 +44,15 @@ class Strategy(BaseStrategy):
         cross_up = ef[-2] <= em[-2] and ef[-1] > em[-1]
         cross_down = ef[-2] >= em[-2] and ef[-1] < em[-1]
 
-        # exits first — opposite cross. The reverse entry follows on the
-        # next cycle, once this returns to flat.
+        # exits first — opposite cross, always, even once an exchange
+        # bracket is resting (stop-and-reverse means the cross itself is the
+        # exit signal; this isn't a strategy whose edge is waiting for its
+        # own SL/TP). The reverse entry follows on the next cycle, once this
+        # returns to flat.
         if position_side == "long" and cross_down:
-            return Signal(Action.EXIT, "EMA9 crossed below EMA20")
+            return Signal(Action.EXIT, "EMA9 crossed below EMA20", exit_with_bracket=True)
         if position_side == "short" and cross_up:
-            return Signal(Action.EXIT, "EMA9 crossed above EMA20")
+            return Signal(Action.EXIT, "EMA9 crossed above EMA20", exit_with_bracket=True)
         if position_side is not None:
             return Signal(Action.HOLD, "in position")
 

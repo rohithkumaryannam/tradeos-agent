@@ -196,6 +196,22 @@ class DeltaClient:
         sl, tp = self.get_bracket_prices(product_id)
         return sl is not None and tp is not None
 
+    def cancel_bracket_orders(self, product_id: int) -> int:
+        """Cancel any resting stop_loss_order/take_profit_order for this
+        product — used when the bot closes a position itself (e.g. a
+        stop-and-reverse exit) before the exchange bracket fires, so the old
+        bracket doesn't linger as a stray reduce-only order. Returns how many
+        were cancelled."""
+        orders = self._request("GET", ENDPOINTS["orders"], params={"product_ids": product_id}, signed=True)
+        cancelled = 0
+        for o in (orders or []):
+            if o.get("state") == "pending" and o.get("stop_order_type") in (
+                "stop_loss_order", "take_profit_order"
+            ):
+                self.cancel_order(o["id"], product_id)
+                cancelled += 1
+        return cancelled
+
     def get_bracket_prices(self, product_id: int) -> tuple[float | None, float | None]:
         """(stop_loss_price, take_profit_price) of the resting bracket legs
         for this product, or (None, None) if no bracket is attached. Used both

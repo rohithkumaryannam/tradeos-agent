@@ -182,6 +182,28 @@ def test_close_uses_a_marketable_limit_order_not_a_market_order():
     assert kwargs["limit_price"] > 102.0    # priced to cross the book and fill
 
 
+def test_close_cancels_the_resting_bracket_when_closing_a_confirmed_position():
+    """A strategy-signal exit that overrides a confirmed exchange bracket
+    (exit_with_bracket=True) must clear the now-stale resting SL/TP orders,
+    not leave them stranded on the exchange."""
+    client = broker_client()
+    b = DeltaBroker(client, "BTCUSD")
+    b.open(RiskEngine(RiskConfig()).size_position("short", 100, 1))
+    assert b.position.bracket_confirmed is True
+    b.close(102.0)
+    client.cancel_bracket_orders.assert_called_once_with(b.product_id)
+
+
+def test_close_does_not_cancel_a_bracket_that_was_never_confirmed():
+    client = broker_client()
+    client.has_bracket.return_value = False
+    b = DeltaBroker(client, "BTCUSD")
+    b.open(RiskEngine(RiskConfig()).size_position("short", 100, 1))
+    assert b.position.bracket_confirmed is False
+    b.close(102.0)
+    client.cancel_bracket_orders.assert_not_called()
+
+
 def test_close_retries_with_a_wider_buffer_if_still_rejected():
     client = broker_client()
     b = DeltaBroker(client, "BTCUSD")
