@@ -1036,6 +1036,7 @@ class Agent:
         db.save_position_bracket(m.symbol, {
             "side": side, "entry": price,
             "stop_loss": plan.stop_loss, "take_profit": plan.take_profit,
+            "strategy": strat,
         })
         if isinstance(m.broker, DeltaBroker) and not m.broker.position.bracket_confirmed:
             self._feed("bracket",

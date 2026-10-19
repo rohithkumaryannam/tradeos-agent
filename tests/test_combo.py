@@ -111,3 +111,32 @@ def test_sub_without_fetch_injection_falls_back_to_shared_candles():
             break
     assert actions
     assert actions[0].strategy == "ema_15m"   # still fires, just off the shared feed
+
+
+def test_owner_is_recovered_from_persisted_bracket_after_a_restart(monkeypatch):
+    """A fresh combo instance (e.g. the process restarted while a position
+    was open) doesn't remember who opened it in memory. It must recover
+    ownership from what the agent persisted at entry time (core.db), or an
+    already-open position never gets a reversal/exit signal again."""
+    from core import db
+    monkeypatch.setattr(db, "load_position_bracket", lambda symbol: {
+        "side": "long", "entry": 82517.5, "stop_loss": 81692.3,
+        "take_profit": 84167.9, "strategy": "ema_15m",
+    })
+    combo = Strategy(
+        subs=[
+            {"name": "ema_crossover", "params": {"resolution": "5m"}, "tag": "ema_5m"},
+            {"name": "ema_crossover", "params": {"resolution": "15m"}, "tag": "ema_15m"},
+        ],
+        _symbol="BTCUSD",
+    )
+    assert combo._owner is None   # fresh instance, no in-memory record
+
+    candles = _timed_candles(_trend(1000.0, -6, 40), step=300)   # down-cross -> exit a long
+    sig = None
+    for i in range(10, len(candles) + 1):
+        sig = combo.generate(candles[:i], "long")
+        if sig.action == Action.EXIT:
+            break
+    assert sig.action == Action.EXIT
+    assert sig.strategy == "ema_15m"   # recovered, not left stuck on None forever

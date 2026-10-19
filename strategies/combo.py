@@ -39,6 +39,7 @@ Or with per-sub params/timeframes:
 from __future__ import annotations
 import time
 
+from core import db
 from core.agent import _RES_SECONDS
 from strategies.base import BaseStrategy, Signal, Action
 from strategies.loader import load_strategy
@@ -113,7 +114,15 @@ class Strategy(BaseStrategy):
                     return sig
             return Signal(Action.HOLD, "no setup (combo)")
 
-        # in a position: only the owning strategy manages the exit
+        # in a position: only the owning strategy manages the exit. A fresh
+        # combo instance (e.g. after a restart) doesn't remember who opened
+        # an already-open position in memory — recover it from what the
+        # agent persisted at entry time, or this position silently never
+        # gets a reversal/exit signal again until it closes on its own.
+        if self._owner is None and self._symbol:
+            persisted = db.load_position_bracket(self._symbol)
+            if persisted and persisted.get("strategy") in dict(self.subs):
+                self._owner = persisted["strategy"]
         owner = dict(self.subs).get(self._owner)
         if owner is None:
             return Signal(Action.HOLD, "in position")
