@@ -102,7 +102,8 @@ class Agent:
             for sym, market in self.markets.items():
                 self.shadow_markets[sym] = ShadowMarket(
                     PaperBroker(lambda price, m=market: m.broker.contract_value(price)),
-                    load_strategy(settings.strategy_name, settings.strategy_params),
+                    load_strategy(settings.strategy_name,
+                                 {**settings.strategy_params, "_symbol": sym, "_fetch_candles": self.fetch_candles}),
                 )
         self.shadow_trades: list[dict] = []
 
@@ -149,7 +150,13 @@ class Agent:
             m.broker = PaperBroker(self._contract_value_fn(m.symbol))
 
     def _build_strategy(self, m: Market):
-        m.strategy = load_strategy(self.s.strategy_name, self.s.strategy_params)
+        # _symbol/_fetch_candles let a strategy (e.g. combo, for a
+        # multi-timeframe sub) pull its own candles at a resolution other
+        # than the agent's shared one. Ordinary strategies accept and ignore
+        # these via **kw (BaseStrategy stores unknown params, doesn't use
+        # them), so this is safe to pass unconditionally.
+        params = {**self.s.strategy_params, "_symbol": m.symbol, "_fetch_candles": self.fetch_candles}
+        m.strategy = load_strategy(self.s.strategy_name, params)
 
     def reload_strategy(self):
         for m in self.markets.values():
@@ -189,7 +196,8 @@ class Agent:
                 )
             if any(m.broker.position for m in self.markets.values()):
                 raise RuntimeError("close open positions before changing strategy")
-            candidates = {sym: load_strategy(name, {}) for sym in self.markets}
+            candidates = {sym: load_strategy(name, {"_symbol": sym, "_fetch_candles": self.fetch_candles})
+                          for sym in self.markets}
             self.s.strategy_name = name
             self.s.strategy_params = {}
             for sym, m in self.markets.items():
@@ -199,7 +207,7 @@ class Agent:
                 m.last_entry_candle = None
             if self.s.shadow_paper:
                 for sym, shadow in self.shadow_markets.items():
-                    shadow.strategy = load_strategy(name, {})
+                    shadow.strategy = load_strategy(name, {"_symbol": sym, "_fetch_candles": self.fetch_candles})
                     shadow.open_trade = None
                     shadow.broker.position = None
             self._align_strategy_data()
@@ -731,11 +739,15 @@ class Agent:
         return {"available": True, "text": txt, "model": ai.model_name(), "ts": self._now()}
 
     # ── data ──
-    def fetch_candles(self, symbol: str) -> list[dict]:
-        sec = _RES_SECONDS.get(self.s.resolution, 300)
+    def fetch_candles(self, symbol: str, resolution: str | None = None) -> list[dict]:
+        """resolution defaults to the agent's own shared timeframe; a
+        multi-timeframe strategy (e.g. a combo sub on a different interval)
+        can pass its own to fetch independently of the agent's main feed."""
+        resolution = resolution or self.s.resolution
+        sec = _RES_SECONDS.get(resolution, 300)
         end = int(self.clock())
         start = end - sec * (self.s.lookback + 5)
-        return self.client.get_candles(symbol, self.s.resolution, start, end)
+        return self.client.get_candles(symbol, resolution, start, end)
 
     # ── one evaluation cycle, across every symbol ──
     def evaluate(self) -> dict[str, Outcome]:

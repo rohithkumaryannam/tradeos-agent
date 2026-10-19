@@ -1,4 +1,5 @@
-"""Pure EMA 9/20 crossover on 5m candles, stop-and-reverse.
+"""Pure EMA 9/20 crossover, stop-and-reverse, on a configurable timeframe
+(5m by default).
 
   - EMA9 crosses UP through EMA20   -> LONG
   - EMA9 crosses DOWN through EMA20 -> SHORT
@@ -12,8 +13,19 @@ from the risk config's stop_loss_pct/take_profit_pct (1%/2% by default — a
 enforced by the risk engine exactly as for any other strategy.
 
 Select it in config.yaml:
-    strategy: { name: ema_crossover, params: { fast: 9, mid: 20 } }
+    strategy: { name: ema_crossover, params: { fast: 9, mid: 20, resolution: "5m" } }
     market: { resolution: "5m" }
+
+The resolution param is what makes it possible to run two instances of this
+same strategy on different timeframes at once, as combo sub-strategies —
+each fetches its own candles at its own resolution independently (see
+strategies/combo.py), rather than all sharing the agent's one candle feed:
+    strategy:
+      name: combo
+      params:
+        subs:
+          - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m }
+          - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m }
 """
 from __future__ import annotations
 
@@ -24,14 +36,13 @@ name = "ema_crossover"
 
 
 class Strategy(BaseStrategy):
-    closed_candles_only = True
-    preferred_resolution = "5m"
-    supported_resolutions = ("5m",)
-
-    def __init__(self, fast=9, mid=20, **kw):
-        super().__init__(fast=fast, mid=mid, **kw)
+    def __init__(self, fast=9, mid=20, resolution="5m", **kw):
+        super().__init__(fast=fast, mid=mid, resolution=resolution, **kw)
         self.fast, self.mid = fast, mid
         self.required_candles = mid + 2
+        self.closed_candles_only = True
+        self.preferred_resolution = resolution
+        self.supported_resolutions = (resolution,)
 
     def generate(self, candles, position_side):
         if len(candles) < self.required_candles:

@@ -1,18 +1,45 @@
-"""Combo meta-strategy: run several strategies at once.
+"""Combo meta-strategy: run several strategies at once, each optionally on
+its own timeframe.
 
 While flat, it polls each sub-strategy in order and takes the first entry
-signal — tagging the trade with the strategy that fired it (shows up as the
-Strategy column in the trade journal and the per-strategy performance table).
-While in a position, only the strategy that OPENED it can signal an exit (the
+signal — tagging the trade with that sub's tag (shows up as the Strategy
+column in the trade journal and the per-strategy performance table). While
+in a position, only the strategy that OPENED it can signal an exit (the
 others are ignored until flat), so ownership stays coherent. SL/TP, sizing
 and the daily cap are still enforced by the risk engine exactly as for a
 single strategy.
 
+Each sub is one of:
+  - a plain string (a strategy module name) — loaded with its own class
+    defaults, tagged by that name. Runs on the base resolution (the first
+    closed-candle sub's preferred_resolution, usually also the agent's
+    market.resolution).
+  - a dict: { name, params?, tag? } — params configure that instance (e.g.
+    a different timeframe); tag is the attribution label (defaults to name
+    — set it explicitly when the same strategy module appears twice, as for
+    two ema_crossover instances on different timeframes, so trades/analytics
+    can tell them apart).
+
+A sub whose own preferred_resolution differs from the base one fetches its
+OWN candles independently (via the agent's fetch_candles, injected as
+_fetch_candles/_symbol — see core/agent.py._build_strategy) instead of
+reusing the shared candle feed, so strategies on different timeframes can
+run genuinely in parallel rather than all being forced onto one resolution.
+
 Select it in config.yaml:
     strategy: { name: combo, params: { subs: [ema_crossover, donchian_breakout] } }
+Or with per-sub params/timeframes:
+    strategy:
+      name: combo
+      params:
+        subs:
+          - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m }
+          - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m }
 """
 from __future__ import annotations
+import time
 
+from core.agent import _RES_SECONDS
 from strategies.base import BaseStrategy, Signal, Action
 from strategies.loader import load_strategy
 
@@ -22,29 +49,63 @@ _DEFAULT_SUBS = ["ema_crossover", "donchian_breakout"]
 
 
 class Strategy(BaseStrategy):
-    def __init__(self, subs=None, **kw):
+    def __init__(self, subs=None, _symbol=None, _fetch_candles=None, **kw):
         super().__init__(subs=subs, **kw)
-        names = subs or _DEFAULT_SUBS
-        self.subs = [(n, load_strategy(n, {})) for n in names]
+        specs = subs or _DEFAULT_SUBS
+        self.subs = []
+        for spec in specs:
+            if isinstance(spec, str):
+                sub_name, params, tag = spec, {}, spec
+            else:
+                sub_name = spec["name"]
+                params = spec.get("params") or {}
+                tag = spec.get("tag", sub_name)
+            self.subs.append((tag, load_strategy(sub_name, params)))
+        self._symbol, self._fetch_candles = _symbol, _fetch_candles
+
         self.closed_candles_only = any(getattr(s, "closed_candles_only", False) for _, s in self.subs)
-        self.required_candles = max(getattr(s, "required_candles", 1) for _, s in self.subs)
-        if self.closed_candles_only:
-            supported = [set(getattr(s, "supported_resolutions", ())) for _, s in self.subs
-                         if getattr(s, "closed_candles_only", False)]
-            shared = set.intersection(*supported) if supported else set()
-            self.supported_resolutions = tuple(shared) or ("15m",)
-            self.preferred_resolution = (
-                self.subs[0][1].preferred_resolution
-                if getattr(self.subs[0][1], "preferred_resolution", None) in self.supported_resolutions
-                else next(iter(self.supported_resolutions))
+        # "base" = whichever closed-candle sub runs on the agent's own shared
+        # candle feed (the first one, by convention/order); every other
+        # closed-candle sub fetches its own data independently if its
+        # resolution differs, so it doesn't need to match the base at all.
+        base = next((s for _, s in self.subs if getattr(s, "closed_candles_only", False)), None)
+        if base is not None:
+            self.preferred_resolution = getattr(base, "preferred_resolution", "15m")
+            self.supported_resolutions = getattr(base, "supported_resolutions", (self.preferred_resolution,))
+            self.required_candles = max(
+                getattr(s, "required_candles", 1) for _, s in self.subs
+                if getattr(s, "preferred_resolution", self.preferred_resolution) == self.preferred_resolution
             )
+        else:
+            self.required_candles = max(getattr(s, "required_candles", 1) for _, s in self.subs)
         self._owner: str | None = None
+
+    def _candles_for(self, strat, base_candles):
+        """base_candles at whatever resolution the agent fetched this cycle;
+        if `strat` prefers a different one and we can fetch independently,
+        pull its own (closed-candles-only) data instead of reusing base."""
+        res = getattr(strat, "preferred_resolution", None)
+        if not res or not self._fetch_candles or not self._symbol:
+            return base_candles
+        sec = _RES_SECONDS.get(res)
+        base_step = (base_candles[1]["time"] - base_candles[0]["time"]
+                     if len(base_candles) >= 2 else None)
+        if sec is None or sec == base_step:
+            return base_candles
+        raw = self._fetch_candles(self._symbol, res)
+        if getattr(strat, "closed_candles_only", False):
+            now = time.time()
+            raw = [c for c in raw if float(c["time"]) + sec <= now]
+        return raw
 
     def generate(self, candles, position_side):
         if position_side is None:
             self._owner = None
             for nm, strat in self.subs:
-                sig = strat.generate(candles, None)
+                sub_candles = self._candles_for(strat, candles)
+                if len(sub_candles) < 2:
+                    continue
+                sig = strat.generate(sub_candles, None)
                 if sig.action in (Action.ENTER_LONG, Action.ENTER_SHORT):
                     self._owner = nm
                     sig.strategy = nm
@@ -56,7 +117,8 @@ class Strategy(BaseStrategy):
         owner = dict(self.subs).get(self._owner)
         if owner is None:
             return Signal(Action.HOLD, "in position")
-        sig = owner.generate(candles, position_side)
+        sub_candles = self._candles_for(owner, candles)
+        sig = owner.generate(sub_candles, position_side)
         if sig.action == Action.EXIT:
             sig.strategy = self._owner
             sig.reason = f"[{self._owner}] {sig.reason}"
