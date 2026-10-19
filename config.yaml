@@ -7,9 +7,11 @@ mode: PAPER            # PAPER = simulated fills, no API orders.
                        # DELTA_DEMO = real orders on Delta testnet (needs .env keys).
 
 market:
-  symbol: [BTCUSD, ETHUSD, SOLUSD]   # trades all listed symbols concurrently,
-                                     # sharing one account's equity/daily cap.
-                                     # A single value (e.g. "BTCUSD") also works.
+  symbol: [BTCUSD, ETHUSD]   # trades all listed symbols concurrently, sharing
+                             # one account's equity/daily cap. SOLUSD dropped —
+                             # any still-open SOLUSD position keeps its exchange
+                             # bracket (SL/TP) and closes on its own regardless.
+                             # A single value (e.g. "BTCUSD") also works.
   resolution: "5m"     # ema_crossover's timeframe (it self-heals to 5m on
                        # startup if set to anything else)
   lookback: 300        # how many recent candles to pull each cycle
