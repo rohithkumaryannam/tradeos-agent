@@ -23,34 +23,30 @@ execution:
   shadow_paper: true   # compare the same signals with simulated fills alongside demo
 
 # ── Strategy selection ──
-# Two EMA 9/20 crossover instances running genuinely in parallel on their
-# own timeframes (5m and 15m) — each fetches its own candles independently
-# (see strategies/combo.py), so they don't have to share one resolution.
-# Both compete for a position on BOTH BTCUSD and ETHUSD — whichever signals
-# first on a given (flat) symbol takes that trade and owns its exit. Both
-# are stop-and-reverse: a down-cross while long closes the long and
-# immediately flips into a short on the next cycle, and vice versa. No
-# trend/chop filter — every cross is traded.
+# Three strategies running genuinely in parallel, each fetching its own
+# candles independently (see strategies/combo.py) so they don't have to
+# share one resolution. All three compete for a position on BOTH BTCUSD and
+# ETHUSD — whichever signals first on a given (flat) symbol takes that
+# trade and owns its exit. Trade journal/analytics tag each by `tag`, so
+# you can compare them.
+#   - ema_5m / ema_15m: pure EMA 9/20 crossover, stop-and-reverse, no
+#     trend/chop filter — every cross is traded.
+#   - btc_trend_pullback: EMA20/50/200 trend stack + ADX >= 20, enters on a
+#     pullback to EMA20 with a confirmation candle, ATR-buffered structure
+#     stop, fixed-R target, and a time-stop. See
+#     strategies/btc_trend_pullback.py for the exact rules.
 #
 # Since 5m candles close ~3x more often than 15m ones, ema_5m gets more
-# chances to grab any given symbol first — expect it to win most of the
-# races. To instead guarantee both actually trade (dedicating one symbol to
-# each, no competition), add `symbols` to each sub:
-#   { name: ema_crossover, params: {...}, tag: ema_5m, symbols: [BTCUSD] }
-#   { name: ema_crossover, params: {...}, tag: ema_15m, symbols: [ETHUSD] }
-#
-# donchian_breakout (plain string sub) would run on the base resolution
-# (ema_5m's "5m", since it's listed first) — add it back with:
-#   subs: [ema_crossover-5m-spec, ema_crossover-15m-spec, donchian_breakout]
-# (donchian needs 15m+, so put an ema_crossover 15m instance first instead
-#  if you want donchian to share its feed, or give donchian its own
-#  resolution the same way the ema instances do.)
+# chances to grab any given symbol first. To guarantee every strategy
+# actually trades (dedicating one symbol to each, no competition), add
+# `symbols` to a sub, e.g. `symbols: [BTCUSD]`.
 strategy:
   name: combo
   params:
     subs:
       - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m }
       - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m }
+      - { name: btc_trend_pullback, tag: btc_trend_pullback }
 
 # ── Risk engine (applies to every trade) ──
 risk:
@@ -73,6 +69,7 @@ risk:
   strategy_risk_pct:         # percent of current account equity per new trade
     ema_5m: 0.25
     ema_15m: 0.25
+    btc_trend_pullback: 0.25
 
 logging:
   level: INFO               # DEBUG INFO WARNING ERROR
