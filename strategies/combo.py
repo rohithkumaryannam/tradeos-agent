@@ -53,32 +53,51 @@ class Strategy(BaseStrategy):
     def __init__(self, subs=None, _symbol=None, _fetch_candles=None, **kw):
         super().__init__(subs=subs, **kw)
         specs = subs or _DEFAULT_SUBS
-        self.subs = []
+        self._symbol, self._fetch_candles = _symbol, _fetch_candles
+
+        # Build every sub first (unfiltered) — this set decides the shared
+        # metadata (resolution/required_candles) so every market's combo
+        # instance reports the SAME values and passes the agent's per-market
+        # resolution gate consistently, regardless of which subs actually
+        # apply to that market. Filtering by `symbols` only affects which
+        # subs actually trade below, not this metadata.
+        all_subs = []
         for spec in specs:
             if isinstance(spec, str):
-                sub_name, params, tag = spec, {}, spec
+                sub_name, params, tag, symbols = spec, {}, spec, None
             else:
                 sub_name = spec["name"]
                 params = spec.get("params") or {}
                 tag = spec.get("tag", sub_name)
-            self.subs.append((tag, load_strategy(sub_name, params)))
-        self._symbol, self._fetch_candles = _symbol, _fetch_candles
+                symbols = spec.get("symbols")
+            all_subs.append((tag, load_strategy(sub_name, params), symbols))
 
-        self.closed_candles_only = any(getattr(s, "closed_candles_only", False) for _, s in self.subs)
+        # `symbols` on a sub spec dedicates it to specific market(s) — e.g.
+        # giving ema_5m and ema_15m one symbol each so they never compete for
+        # the same position and both genuinely get to trade, for a fair
+        # comparison. A sub with no `symbols` restriction applies everywhere.
+        self.subs = [(tag, strat) for tag, strat, symbols in all_subs
+                     if not symbols or (_symbol and _symbol in symbols)]
+        if not self.subs:
+            # misconfigured (symbols excludes every market) — fail open
+            # rather than silently trading nothing.
+            self.subs = [(tag, strat) for tag, strat, _ in all_subs]
+
+        self.closed_candles_only = any(getattr(s, "closed_candles_only", False) for _, s, _ in all_subs)
         # "base" = whichever closed-candle sub runs on the agent's own shared
         # candle feed (the first one, by convention/order); every other
         # closed-candle sub fetches its own data independently if its
         # resolution differs, so it doesn't need to match the base at all.
-        base = next((s for _, s in self.subs if getattr(s, "closed_candles_only", False)), None)
+        base = next((s for _, s, _ in all_subs if getattr(s, "closed_candles_only", False)), None)
         if base is not None:
             self.preferred_resolution = getattr(base, "preferred_resolution", "15m")
             self.supported_resolutions = getattr(base, "supported_resolutions", (self.preferred_resolution,))
             self.required_candles = max(
-                getattr(s, "required_candles", 1) for _, s in self.subs
+                getattr(s, "required_candles", 1) for _, s, _ in all_subs
                 if getattr(s, "preferred_resolution", self.preferred_resolution) == self.preferred_resolution
             )
         else:
-            self.required_candles = max(getattr(s, "required_candles", 1) for _, s in self.subs)
+            self.required_candles = max(getattr(s, "required_candles", 1) for _, s, _ in all_subs)
         self._owner: str | None = None
 
     def _candles_for(self, strat, base_candles):

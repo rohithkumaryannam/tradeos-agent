@@ -140,3 +140,35 @@ def test_owner_is_recovered_from_persisted_bracket_after_a_restart(monkeypatch):
             break
     assert sig.action == Action.EXIT
     assert sig.strategy == "ema_15m"   # recovered, not left stuck on None forever
+
+
+def test_symbols_dedicates_a_sub_to_specific_markets():
+    """Giving each sub its own `symbols` means they never compete for the
+    same market's position -- needed so two instances of the same strategy
+    (e.g. ema_5m and ema_15m) can both actually trade and be compared fairly,
+    instead of a faster one always winning the race for every symbol."""
+    specs = [
+        {"name": "ema_crossover", "params": {"resolution": "5m"}, "tag": "ema_5m", "symbols": ["BTCUSD"]},
+        {"name": "ema_crossover", "params": {"resolution": "15m"}, "tag": "ema_15m", "symbols": ["ETHUSD"]},
+    ]
+    btc_combo = Strategy(subs=specs, _symbol="BTCUSD")
+    eth_combo = Strategy(subs=specs, _symbol="ETHUSD")
+    assert [tag for tag, _ in btc_combo.subs] == ["ema_5m"]
+    assert [tag for tag, _ in eth_combo.subs] == ["ema_15m"]
+
+
+def test_symbols_filtering_does_not_change_shared_resolution_metadata():
+    """Every market's combo instance must report the SAME
+    preferred_resolution/supported_resolutions/required_candles regardless
+    of which subs apply to it, or the agent's per-market resolution gate
+    would block whichever market's own filtered sub doesn't match the
+    globally self-healed resolution."""
+    specs = [
+        {"name": "ema_crossover", "params": {"resolution": "5m"}, "tag": "ema_5m", "symbols": ["BTCUSD"]},
+        {"name": "ema_crossover", "params": {"resolution": "15m"}, "tag": "ema_15m", "symbols": ["ETHUSD"]},
+    ]
+    btc_combo = Strategy(subs=specs, _symbol="BTCUSD")
+    eth_combo = Strategy(subs=specs, _symbol="ETHUSD")
+    assert btc_combo.preferred_resolution == eth_combo.preferred_resolution
+    assert btc_combo.supported_resolutions == eth_combo.supported_resolutions
+    assert btc_combo.required_candles == eth_combo.required_candles

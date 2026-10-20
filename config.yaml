@@ -28,14 +28,20 @@ execution:
 # (see strategies/combo.py), so they don't have to share one resolution.
 # Both are stop-and-reverse: a down-cross while long closes the long and
 # immediately flips into a short on the next cycle, and vice versa. No
-# trend/chop filter — every cross is traded. Whichever signals first takes
-# the trade and owns its exit; the trade journal/analytics tag it by `tag`
-# below (ema_5m / ema_15m), so you can see which timeframe is working.
+# trend/chop filter — every cross is traded.
 #
-# donchian_breakout (plain string sub) would run on the base resolution
-# (ema_5m's "5m", since it's listed first) — add it back with:
-#   subs: [{name: ema_crossover, params: {resolution: "5m"}, tag: ema_5m},
-#          {name: ema_crossover, params: {resolution: "15m"}, tag: ema_15m},
+# `symbols` dedicates each instance to its own market (ema_5m -> BTCUSD only,
+# ema_15m -> ETHUSD only), so they never compete for the same position —
+# without this, the faster 5m instance gets ~3x more chances to grab any
+# given symbol and the 15m one rarely gets to trade at all. Dedicating
+# symbols guarantees both actually run, for a fair side-by-side comparison
+# (trade journal/analytics tag each by `tag`: ema_5m / ema_15m).
+#
+# donchian_breakout (plain string sub, no `symbols` restriction) would apply
+# to every market and run on the base resolution (ema_5m's "5m", since it's
+# listed first) — add it back with:
+#   subs: [{name: ema_crossover, params: {resolution: "5m"}, tag: ema_5m, symbols: [BTCUSD]},
+#          {name: ema_crossover, params: {resolution: "15m"}, tag: ema_15m, symbols: [ETHUSD]},
 #          donchian_breakout]
 # (donchian needs 15m+, so put an ema_crossover 15m instance first instead
 #  if you want donchian to share its feed, or give donchian its own
@@ -44,8 +50,8 @@ strategy:
   name: combo
   params:
     subs:
-      - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m }
-      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m }
+      - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m, symbols: [BTCUSD] }
+      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m, symbols: [ETHUSD] }
 
 # ── Risk engine (applies to every trade) ──
 risk:
