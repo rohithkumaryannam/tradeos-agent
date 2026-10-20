@@ -409,7 +409,7 @@ function renderAnalytics(a) {
     `<div class="perf"><div class="l">${l}</div><div class="n ${c || ""}">${v}</div></div>`).join("");
 }
 
-const STRAT_SHORT = { ema_crossover: "EMA 9/20", donchian_breakout: "Donchian breakout", combo: "combo" };
+const STRAT_SHORT = { ema_crossover: "EMA 9/20", donchian_breakout: "Donchian breakout", btc_trend_pullback: "Trend pullback", btc_bms: "BTC BMS", mean_reversion: "Mean reversion", time_series_momentum: "Time-series momentum", combo: "combo" };
 
 function renderStrategyPerf(byStrategy, riskCaps, activeStrategies) {
   byStrategy = byStrategy || {}; riskCaps = riskCaps || {};

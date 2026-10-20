@@ -46,7 +46,14 @@ from strategies.loader import load_strategy
 
 name = "combo"
 
-_DEFAULT_SUBS = ["ema_crossover", "donchian_breakout"]
+_DEFAULT_SUBS = [
+    "ema_crossover",
+    "donchian_breakout",
+    "btc_trend_pullback",
+    "btc_bms",
+    "mean_reversion",
+    "time_series_momentum",
+]
 
 
 class Strategy(BaseStrategy):

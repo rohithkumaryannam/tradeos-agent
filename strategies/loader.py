@@ -18,4 +18,5 @@ def available_strategies() -> list[str]:
     """Every selectable strategy module in strategies/ (excludes the framework)."""
     skip = {"base", "loader"}
     return sorted(m.name for m in pkgutil.iter_modules(strategies.__path__)
-                  if m.name not in skip and not m.name.startswith("_"))
+                  if m.name not in skip and not m.name.startswith("_")
+                  and not m.name.endswith("_backtest"))

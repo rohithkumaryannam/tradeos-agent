@@ -23,9 +23,9 @@ execution:
   shadow_paper: true   # compare the same signals with simulated fills alongside demo
 
 # ── Strategy selection ──
-# Three strategies running genuinely in parallel, each fetching its own
+# Every installed live strategy runs in the same combo, fetching its own
 # candles independently (see strategies/combo.py) so they don't have to
-# share one resolution. All three compete for a position on BOTH BTCUSD and
+# share one resolution. They compete for a position on BOTH BTCUSD and
 # ETHUSD — whichever signals first on a given (flat) symbol takes that
 # trade and owns its exit. Trade journal/analytics tag each by `tag`, so
 # you can compare them.
@@ -35,11 +35,17 @@ execution:
 #     pullback to EMA20 with a confirmation candle, ATR-buffered structure
 #     stop, fixed-R target, and a time-stop. See
 #     strategies/btc_trend_pullback.py for the exact rules.
+#   - mean_reversion: 15m low-ADX Bollinger-band extremes confirmed by RSI,
+#     with an ATR stop, middle-band target, and 32-bar time-stop.
+#   - donchian_breakout: 15m volume-confirmed channel breakout.
+#   - btc_bms: 5m price-action zone rejection with structure exits.
+#   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
 #
-# Since 5m candles close ~3x more often than 15m ones, ema_5m gets more
-# chances to grab any given symbol first. To guarantee every strategy
-# actually trades (dedicating one symbol to each, no competition), add
-# `symbols` to a sub, e.g. `symbols: [BTCUSD]`.
+# A live Delta account has one net position per symbol, so strategies compete
+# for BTCUSD and ETHUSD rather than opening conflicting independent positions.
+# Every configured strategy remains active and is attributed by its tag; an
+# entry happens only when its own deterministic setup and shared risk checks
+# pass. The paper shadow lane compares the same combo without placing orders.
 strategy:
   name: combo
   params:
@@ -47,6 +53,10 @@ strategy:
       - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m }
       - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m }
       - { name: btc_trend_pullback, tag: btc_trend_pullback }
+      - { name: mean_reversion, tag: mean_reversion }
+      - { name: donchian_breakout, tag: donchian_breakout }
+      - { name: btc_bms, tag: btc_bms }
+      - { name: time_series_momentum, tag: time_series_momentum }
 
 # ── Risk engine (applies to every trade) ──
 risk:
@@ -70,6 +80,10 @@ risk:
     ema_5m: 0.25
     ema_15m: 0.25
     btc_trend_pullback: 0.25
+    mean_reversion: 0.25
+    donchian_breakout: 0.25
+    btc_bms: 0.25
+    time_series_momentum: 0.25
 
 logging:
   level: INFO               # DEBUG INFO WARNING ERROR

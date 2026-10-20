@@ -46,7 +46,10 @@ def test_only_the_owning_strategy_manages_the_exit():
 
 
 def test_default_combo_includes_every_live_strategy():
-    assert [name for name, _ in Strategy().subs] == ["ema_crossover", "donchian_breakout"]
+    assert [name for name, _ in Strategy().subs] == [
+        "ema_crossover", "donchian_breakout", "btc_trend_pullback",
+        "btc_bms", "mean_reversion", "time_series_momentum",
+    ]
 
 
 def _trend(start, move, n, flat=25):

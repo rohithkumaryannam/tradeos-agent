@@ -127,13 +127,15 @@ remain experimental paper/testnet candidates.
 
 ## Strategies and development
 
-`strategies/ema_crossover.py` implements the EMA 9/20/200 + ADX crossover
-(trend/chop filtered, ATR-based bracket). `strategies/donchian_breakout.py`
-implements a volume- and ADX-confirmed channel breakout with a trailing
-channel exit. `strategies/combo.py` runs both at once — whichever signals
-first takes the trade and owns its exit; every closed trade is tagged with
-the strategy that took it. Implement `BaseStrategy.generate()` returning a
-`Signal` to add another one. Risk and execution stay in the shared engine.
+`strategies/ema_crossover.py` implements the EMA 9/20 crossover.
+`strategies/donchian_breakout.py` implements a volume- and ADX-confirmed
+channel breakout, `strategies/btc_trend_pullback.py` implements the 15-minute
+trend pullback system, and `strategies/mean_reversion.py` implements the
+15-minute low-ADX Bollinger/RSI system. The combo also runs the installed BTC
+BMS price-action strategy and restored 1-hour time-series momentum strategy.
+Whichever produces the first valid signal takes that market position and owns
+its exit. Every closed trade is attributed to its strategy. Risk and execution
+stay in the shared engine.
 Strategy changes require flat positions and clear pending signals.
 
 ```bash
