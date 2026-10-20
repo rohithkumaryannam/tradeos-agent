@@ -103,6 +103,12 @@ class DeltaBroker:
         self.product_id = prod.get("id")
         # contract value in BTC terms; Delta BTCUSD perp = 0.001 BTC/contract
         self.contract_size = float(prod.get("contract_value", 0))
+        try:
+            self.tick_size = float(prod.get("tick_size") or 0)
+        except (TypeError, ValueError):
+            self.tick_size = 0.0
+        if not math.isfinite(self.tick_size) or self.tick_size <= 0:
+            self.tick_size = 0.0
         if not math.isfinite(self.contract_size) or self.contract_size <= 0:
             raise DeltaError(f"invalid contract specification for {symbol}")
         if not self.product_id:
@@ -174,6 +180,23 @@ class DeltaBroker:
     def contract_value(self, price: float) -> float:
         return self.contract_size * price
 
+    def _bracket_prices(self, side: str, stop_loss: float, take_profit: float):
+        """Snap bracket legs to Delta's product tick without crossing entry."""
+        if not self.tick_size:
+            return stop_loss, take_profit
+        tick = self.tick_size
+        decimals = max(0, len(f"{tick:.12f}".rstrip("0").split(".")[-1]))
+
+        def snap(value, direction):
+            units = value / tick
+            units = (math.floor(units + 1e-12) if direction == "down"
+                     else math.ceil(units - 1e-12))
+            return round(units * tick, decimals)
+
+        if side == "long":
+            return snap(stop_loss, "down"), snap(take_profit, "up")
+        return snap(stop_loss, "up"), snap(take_profit, "down")
+
     def open(self, plan: TradePlan) -> Position:
         if self.position or self.execution_issue:
             raise DeltaError(self.execution_issue or "position already open")
@@ -187,12 +210,20 @@ class DeltaBroker:
         # False, and the bot loop's own check_bracket keeps watching as a
         # fallback — never silently claim exchange protection we didn't get.
         client_order_id = uuid.uuid4().hex
+        stop_loss, take_profit = self._bracket_prices(
+            plan.side, plan.stop_loss, plan.take_profit
+        )
+        if not (stop_loss > 0 and take_profit > 0 and
+                (stop_loss < plan.entry < take_profit if plan.side == "long"
+                 else take_profit < plan.entry < stop_loss)):
+            raise DeltaError("product tick size makes the bracket invalid")
+        plan.stop_loss, plan.take_profit = stop_loss, take_profit
         try:
             order = self.client.place_order(
                 product_id=self.product_id, size=plan.size_contracts,
                 side=side, order_type="market_order",
-                bracket_stop_loss_price=plan.stop_loss,
-                bracket_take_profit_price=plan.take_profit,
+                bracket_stop_loss_price=stop_loss,
+                bracket_take_profit_price=take_profit,
                 client_order_id=client_order_id,
             )
         except Exception:

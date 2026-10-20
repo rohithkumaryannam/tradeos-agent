@@ -182,6 +182,22 @@ def test_close_uses_a_marketable_limit_order_not_a_market_order():
     assert kwargs["limit_price"] > 102.0    # priced to cross the book and fill
 
 
+def test_delta_bracket_prices_are_snapped_to_product_tick():
+    client = broker_client()
+    client.get_product.return_value = {"id": 1, "contract_value": 1000, "tick_size": 0.000001}
+    b = DeltaBroker(client, "1000SHIBUSD")
+    plan = RiskEngine(RiskConfig()).size_position(
+        "long", 0.005375, contract_value=5.375,
+        stop_loss=0.005321234, take_profit=0.005482987,
+    )
+    b.open(plan)
+    kwargs = client.place_order.call_args.kwargs
+    assert kwargs["bracket_stop_loss_price"] == 0.005321
+    assert kwargs["bracket_take_profit_price"] == 0.005483
+    assert b.position.stop_loss == 0.005321
+    assert b.position.take_profit == 0.005483
+
+
 def test_close_cancels_the_resting_bracket_when_closing_a_confirmed_position():
     """A strategy-signal exit that overrides a confirmed exchange bracket
     (exit_with_bracket=True) must clear the now-stale resting SL/TP orders,
