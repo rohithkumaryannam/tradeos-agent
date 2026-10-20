@@ -7,17 +7,16 @@ mode: PAPER            # PAPER = simulated fills, no API orders.
                        # DELTA_DEMO = real orders on Delta testnet (needs .env keys).
 
 market:
-  symbol: [BTCUSD, ETHUSD]   # trades all listed symbols concurrently, sharing
-                             # one account's equity/daily cap. SOLUSD dropped —
-                             # any still-open SOLUSD position keeps its exchange
-                             # bracket (SL/TP) and closes on its own regardless.
-                             # A single value (e.g. "BTCUSD") also works.
+  # One Delta product per strategy. Delta nets positions by product, so this
+  # mapping lets all seven strategies own independent live positions while
+  # still sharing the account's equity and deterministic risk controls.
+  symbol: [BTCUSD, ETHUSD, SOLUSD, XRPUSD, DOGEUSD, ADAUSD, 1000SHIBUSD]
   resolution: "5m"     # ema_crossover's timeframe (it self-heals to 5m on
                        # startup if set to anything else)
   lookback: 300        # how many recent candles to pull each cycle
 
 loop:
-  poll_seconds: 5      # how often the agent wakes up and evaluates
+  poll_seconds: 15     # closed-candle strategies; protects API quota across 7 products
 
 execution:
   shadow_paper: false  # Delta-only: no simulated strategy execution lanes
@@ -25,10 +24,9 @@ execution:
 # ── Strategy selection ──
 # Every installed live strategy runs in the same combo, fetching its own
 # candles independently (see strategies/combo.py) so they don't have to
-# share one resolution. They compete for a position on BOTH BTCUSD and
-# ETHUSD — whichever signals first on a given (flat) symbol takes that
-# trade and owns its exit. Trade journal/analytics tag each by `tag`, so
-# you can compare them.
+# share one resolution. Each strategy is restricted to one unique Delta
+# product, preventing strategies from merging or reversing each other's
+# positions. Trade journal/analytics tag each by `tag` for comparison.
 #   - ema_5m / ema_15m: pure EMA 9/20 crossover, stop-and-reverse, no
 #     trend/chop filter — every cross is traded.
 #   - btc_trend_pullback: EMA20/50/200 trend stack + ADX >= 20, enters on a
@@ -41,23 +39,20 @@ execution:
 #   - btc_bms: 5m price-action zone rejection with structure exits.
 #   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
 #
-# A live Delta account has one net position per symbol, so strategies compete
-# for BTCUSD and ETHUSD rather than opening conflicting independent positions.
-# Every configured strategy remains active and is attributed by its tag. Live
-# Delta orders remain safely netted per symbol. Independent paper lanes use
-# real Delta candles so every strategy can enter, hold and exit concurrently
-# without waiting for the live BTCUSD or ETHUSD position to become flat.
+# A live Delta account has one net position per symbol. The `symbols` field on
+# each sub-strategy gives it exclusive ownership of its product, so all seven
+# can hold live Delta positions concurrently when their own setups trigger.
 strategy:
   name: combo
   params:
     subs:
-      - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m }
-      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m }
-      - { name: btc_trend_pullback, tag: btc_trend_pullback }
-      - { name: mean_reversion, tag: mean_reversion }
-      - { name: donchian_breakout, tag: donchian_breakout }
-      - { name: btc_bms, tag: btc_bms }
-      - { name: time_series_momentum, tag: time_series_momentum }
+      - { name: time_series_momentum, tag: time_series_momentum, symbols: [BTCUSD] }
+      - { name: btc_trend_pullback, tag: btc_trend_pullback, symbols: [ETHUSD] }
+      - { name: donchian_breakout, tag: donchian_breakout, symbols: [SOLUSD] }
+      - { name: mean_reversion, tag: mean_reversion, symbols: [XRPUSD] }
+      - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m, symbols: [DOGEUSD] }
+      - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
+      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m, symbols: [1000SHIBUSD] }
 
 # ── Risk engine (applies to every trade) ──
 risk:

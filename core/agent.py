@@ -1433,10 +1433,13 @@ class Agent:
             if not can:
                 entry_blocks.append(why)
             first = next(iter(markets.values())) if markets else {}
-            first_strategy = next(iter(self.markets.values())).strategy if self.markets else None
-            active_strategies = [
-                name for name, _ in getattr(first_strategy, "subs", [])
-            ] or [self.s.strategy_name]
+            active_strategies = []
+            for market in self.markets.values():
+                for name, _ in getattr(market.strategy, "subs", []):
+                    if name not in active_strategies:
+                        active_strategies.append(name)
+            if not active_strategies:
+                active_strategies = [self.s.strategy_name]
             return {
                 "ts": self._now(),
                 "mode": self.s.mode,
