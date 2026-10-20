@@ -55,8 +55,12 @@ CONFIG_RESOLUTION = settings.resolution
 @asynccontextmanager
 async def lifespan(app):
     _resume_from_state()
-    yield
-    runner._stop.set()
+    try:
+        yield
+    finally:
+        runner._stop.set()
+        if os.getenv("MONGODB_URI", "").strip():
+            db.release_execution_lease(runner.owner)
 
 
 app = FastAPI(title="TradeOS Dashboard", lifespan=lifespan)

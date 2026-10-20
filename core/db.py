@@ -176,6 +176,8 @@ def acquire_execution_lease(owner: str, ttl_seconds: int = 30) -> bool:
         return bool(doc and doc.get("owner") == owner)
     except Exception as e:
         # A duplicate-key error means another instance owns the singleton.
+        if getattr(e, "code", None) == 11000:
+            return False
         log.warning("execution lease unavailable: %s", e)
         return False
 
