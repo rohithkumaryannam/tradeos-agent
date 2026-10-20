@@ -93,7 +93,21 @@ class DeltaClient:
                 data=body_str if body_str else None, timeout=15,
             )
         except requests.RequestException as e:
-            raise DeltaError(f"network error: {e}") from e
+            # A hosted proxy can expire or reject traffic independently of
+            # Delta. Retry once without it so a healthy direct route can
+            # recover automatically; authentication/whitelist errors remain
+            # visible from Delta and are handled by the account backoff.
+            if self.session.proxies:
+                try:
+                    direct = requests.Session()
+                    resp = direct.request(
+                        method, url, headers=headers,
+                        data=body_str if body_str else None, timeout=15,
+                    )
+                except requests.RequestException as direct_error:
+                    raise DeltaError(f"network error: {direct_error}") from direct_error
+            else:
+                raise DeltaError(f"network error: {e}") from e
 
         if resp.status_code >= 400:
             raise DeltaError(f"{method} {path} -> {resp.status_code}: {resp.text[:300]}")
