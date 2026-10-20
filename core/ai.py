@@ -1,4 +1,4 @@
-"""Minimal Google Gemini client.
+"""Small, fail-closed AI client for analysis and narration.
 
 Fail-closed by design: any missing key, network error, HTTP error or unexpected
 payload returns None (and logs a warning) so the trading bot never breaks when
@@ -17,6 +17,8 @@ log = logging.getLogger("tradeos.ai")
 
 _URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 _DEFAULT_MODEL = "gemini-3.8-flash"
+_OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+_OPENROUTER_MODEL = "nvidia/nemotron-3.5-super-vl:free"
 
 
 def _key() -> str:
@@ -25,11 +27,17 @@ def _key() -> str:
     return (os.getenv("GEMINI_API_KEY") or "").strip()
 
 
+def _openrouter_key() -> str:
+    return (os.getenv("OPENROUTER_API_KEY") or "").strip()
+
+
 def available() -> bool:
-    return bool(_key())
+    return bool(_openrouter_key() or _key())
 
 
 def model_name() -> str:
+    if _openrouter_key():
+        return os.getenv("OPENROUTER_MODEL", _OPENROUTER_MODEL).strip()
     return os.getenv("GEMINI_MODEL", _DEFAULT_MODEL).strip()
 
 
@@ -43,9 +51,35 @@ def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
     reasoning. 0 disables thinking (fast, and leaves all of max_tokens for the
     visible answer) — use it when you want a short, direct output. Left None, the
     model decides, so give max_tokens enough headroom for reasoning + answer."""
+    openrouter_key = _openrouter_key()
     key = _key()
-    if not key:
+    if not openrouter_key and not key:
         return None
+    if openrouter_key:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            r = requests.post(
+                _OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {openrouter_key}",
+                         "Content-Type": "application/json",
+                         "HTTP-Referer": "https://tradeos-agent-production.up.railway.app",
+                         "X-Title": "TradeOS"},
+                json={"model": model_name(), "messages": messages,
+                      "max_tokens": max_tokens, "temperature": temperature},
+                timeout=timeout,
+            )
+            if r.status_code >= 400:
+                log.warning("OpenRouter %s -> %s", model_name(), r.status_code)
+                return None
+            choices = (r.json().get("choices") or [{}])
+            text = (choices[0].get("message") or {}).get("content", "")
+            return text.strip() or None
+        except Exception as e:
+            log.warning("OpenRouter call failed: %s", e)
+            return None
     gen: dict = {"maxOutputTokens": max_tokens, "temperature": temperature}
     if thinking_budget is not None:
         gen["thinkingConfig"] = {"thinkingBudget": thinking_budget}
