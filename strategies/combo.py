@@ -128,9 +128,11 @@ class Strategy(BaseStrategy):
     def generate(self, candles, position_side):
         if position_side is None:
             self._owner = None
+            reasons = []
             for nm, strat in self.subs:
                 sub_candles = self._candles_for(strat, candles)
                 if len(sub_candles) < 2:
+                    reasons.append(f"{nm}: warming up")
                     continue
                 sig = strat.generate(sub_candles, None)
                 if sig.action in (Action.ENTER_LONG, Action.ENTER_SHORT):
@@ -138,7 +140,8 @@ class Strategy(BaseStrategy):
                     sig.strategy = nm
                     sig.reason = f"[{nm}] {sig.reason}"
                     return sig
-            return Signal(Action.HOLD, "no setup (combo)")
+                reasons.append(f"{nm}: {sig.reason or 'no setup'}")
+            return Signal(Action.HOLD, " | ".join(reasons) if reasons else "no configured strategy")
 
         # in a position: only the owning strategy manages the exit. A fresh
         # combo instance (e.g. after a restart) doesn't remember who opened
