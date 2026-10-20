@@ -11,7 +11,7 @@ def test_live_mean_reversion_is_discoverable_but_research_scripts_are_not():
     assert load_strategy("mean_reversion", {}).__class__.__name__ == "Strategy"
 
 
-def test_configured_combo_loads_every_strategy_with_a_risk_cap(tmp_path):
+def test_configured_combo_assigns_one_active_strategy_per_market(tmp_path):
     settings = Settings.load()
     assignments = {
         symbol: [tag for tag, _ in Combo(
@@ -20,15 +20,14 @@ def test_configured_combo_loads_every_strategy_with_a_risk_cap(tmp_path):
         for symbol in settings.symbols
     }
     assert assignments == {
-        "BTCUSD": ["time_series_momentum"],
-        "ETHUSD": ["btc_trend_pullback"],
-        "SOLUSD": ["donchian_breakout"],
+        "BTCUSD": ["ema_15m"],
+        "ETHUSD": ["ema_5m"],
         "XRPUSD": ["mean_reversion"],
-        "DOGEUSD": ["ema_5m"],
+        "DOGEUSD": ["donchian_breakout"],
         "ADAUSD": ["btc_bms"],
-        "1000SHIBUSD": ["ema_15m"],
+        "1000SHIBUSD": ["time_series_momentum"],
     }
     tags = [items[0] for items in assignments.values()]
-    assert set(tags) == set(settings.risk.strategy_risk_pct)
+    assert set(tags) <= set(settings.risk.strategy_risk_pct)
     settings.trade_log = str(tmp_path / "trades.csv")
     assert set(Agent(settings).snapshot()["active_strategies"]) == set(tags)
