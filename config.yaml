@@ -20,7 +20,7 @@ loop:
   poll_seconds: 5      # how often the agent wakes up and evaluates
 
 execution:
-  shadow_paper: true   # compare the same signals with simulated fills alongside demo
+  shadow_paper: true   # every combo sub gets an independent simulated execution lane
 
 # ── Strategy selection ──
 # Every installed live strategy runs in the same combo, fetching its own
@@ -43,9 +43,10 @@ execution:
 #
 # A live Delta account has one net position per symbol, so strategies compete
 # for BTCUSD and ETHUSD rather than opening conflicting independent positions.
-# Every configured strategy remains active and is attributed by its tag; an
-# entry happens only when its own deterministic setup and shared risk checks
-# pass. The paper shadow lane compares the same combo without placing orders.
+# Every configured strategy remains active and is attributed by its tag. Live
+# Delta orders remain safely netted per symbol. Independent paper lanes use
+# real Delta candles so every strategy can enter, hold and exit concurrently
+# without waiting for the live BTCUSD or ETHUSD position to become flat.
 strategy:
   name: combo
   params:

@@ -78,6 +78,30 @@ class ShadowMarket:
     last_entry_candle: float | None = None
 
 
+@dataclass
+class StrategyLane:
+    """One strategy's isolated paper account on one real market feed.
+
+    Delta exposes one net position per product, so combo strategies cannot
+    safely own separate live BTCUSD/ETHUSD positions.  Lanes remove that
+    waiting constraint for strategy evaluation without creating conflicting
+    exchange orders: every sub-strategy gets its own broker and risk ledger.
+    """
+    symbol: str
+    tag: str
+    resolution: str
+    broker: object
+    strategy: object
+    risk: RiskEngine
+    open_trade: dict | None = None
+    last_entry_candle: float | None = None
+    opened_market_candle: float | None = None
+    last_action: str = "WARMING_UP"
+    last_reason: str = "waiting for market data"
+    last_evaluated: str | None = None
+    error: str | None = None
+
+
 class Agent:
     def __init__(self, settings: Settings, client: DeltaClient | None = None, clock=None):
         self.s = settings
@@ -98,13 +122,9 @@ class Agent:
         self._align_strategy_data()
         self.shadow_risk = RiskEngine(replace(settings.risk), clock=self.clock)
         self.shadow_markets: dict[str, ShadowMarket] = {}
-        if settings.shadow_paper:
-            for sym, market in self.markets.items():
-                self.shadow_markets[sym] = ShadowMarket(
-                    PaperBroker(lambda price, m=market: m.broker.contract_value(price)),
-                    load_strategy(settings.strategy_name,
-                                 {**settings.strategy_params, "_symbol": sym, "_fetch_candles": self.fetch_candles}),
-                )
+        self.strategy_lanes: dict[str, StrategyLane] = {}
+        self._lane_candle_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+        self._build_shadow_execution()
         self.shadow_trades: list[dict] = []
 
         # structured completed-trade ledger (persists via the CSV log)
@@ -158,6 +178,49 @@ class Agent:
         params = {**self.s.strategy_params, "_symbol": m.symbol, "_fetch_candles": self.fetch_candles}
         m.strategy = load_strategy(self.s.strategy_name, params)
 
+    def _build_shadow_execution(self):
+        """Build either the legacy single shadow or one lane per combo sub."""
+        self.shadow_markets = {}
+        self.strategy_lanes = {}
+        self._lane_candle_cache = {}
+        if not self.s.shadow_paper:
+            return
+        if self.s.strategy_name != "combo":
+            for sym, market in self.markets.items():
+                self.shadow_markets[sym] = ShadowMarket(
+                    PaperBroker(lambda price, m=market: m.broker.contract_value(price)),
+                    load_strategy(self.s.strategy_name,
+                                  {**self.s.strategy_params, "_symbol": sym,
+                                   "_fetch_candles": self.fetch_candles}),
+                )
+            return
+
+        specs = self.s.strategy_params.get("subs") or []
+        for sym, market in self.markets.items():
+            for spec in specs:
+                if isinstance(spec, str):
+                    sub_name, params, tag, symbols = spec, {}, spec, None
+                else:
+                    sub_name = spec["name"]
+                    params = spec.get("params") or {}
+                    tag = spec.get("tag", sub_name)
+                    symbols = spec.get("symbols")
+                if symbols and sym not in symbols:
+                    continue
+                strategy = load_strategy(sub_name, params)
+                resolution = getattr(strategy, "preferred_resolution", self.s.resolution)
+                key = f"{sym}:{tag}"
+                if key in self.strategy_lanes:
+                    raise RuntimeError(f"duplicate paper strategy lane: {key}")
+                self.strategy_lanes[key] = StrategyLane(
+                    symbol=sym,
+                    tag=tag,
+                    resolution=resolution,
+                    broker=PaperBroker(lambda price, m=market: m.broker.contract_value(price)),
+                    strategy=strategy,
+                    risk=RiskEngine(replace(self.s.risk), clock=self.clock),
+                )
+
     def reload_strategy(self):
         for m in self.markets.values():
             self._build_strategy(m)
@@ -206,10 +269,7 @@ class Agent:
                 m.last_candles = []
                 m.last_entry_candle = None
             if self.s.shadow_paper:
-                for sym, shadow in self.shadow_markets.items():
-                    shadow.strategy = load_strategy(name, {"_symbol": sym, "_fetch_candles": self.fetch_candles})
-                    shadow.open_trade = None
-                    shadow.broker.position = None
+                self._build_shadow_execution()
             self._align_strategy_data()
             self._feed("mode", f"strategy -> {name}")
 
@@ -303,6 +363,9 @@ class Agent:
         with self.lock:
             self.s.risk = new_config
             self.risk.cfg = new_config
+            self.shadow_risk.cfg = new_config
+            for lane in self.strategy_lanes.values():
+                lane.risk.cfg = new_config
             self._feed("risk", "risk controls updated from dashboard")
         return new_config
 
@@ -682,13 +745,40 @@ class Agent:
     def _shadow_snapshot(self) -> dict:
         trades = self.shadow_trades
         wins = [t for t in trades if t.get("win")]
+        by_strategy = self._analytics_by_strategy(trades)
+        if self.strategy_lanes:
+            for lane in self.strategy_lanes.values():
+                stats = by_strategy.setdefault(lane.tag, {
+                    "trades": 0, "wins": 0, "losses": 0, "win_rate": None,
+                    "total_pnl": 0.0, "profit_factor": None, "avg_r": None,
+                })
+                stats["open_positions"] = stats.get("open_positions", 0) + bool(lane.broker.position)
+                stats.setdefault("symbols", {})[lane.symbol] = {
+                    "resolution": lane.resolution,
+                    "position": lane.broker.position.side if lane.broker.position else None,
+                    "action": lane.last_action,
+                    "reason": lane.last_reason,
+                    "evaluated_at": lane.last_evaluated,
+                    "error": lane.error,
+                }
         return {
             "enabled": self.s.shadow_paper,
-            "equity": round(self.shadow_risk.equity, 2) if self.s.shadow_paper else None,
-            "open_positions": sum(1 for s in self.shadow_markets.values() if s.broker.position),
+            "independent": bool(self.strategy_lanes),
+            "market_data": "Delta candles" if self.strategy_lanes else None,
+            "execution": "paper" if self.strategy_lanes else None,
+            "lanes": len(self.strategy_lanes),
+            # Treat the lanes as parallel experiments sharing one starting
+            # balance: starting equity plus their aggregate realized P&L.
+            "equity": (round(self.s.risk.account_equity + sum(t["pnl"] for t in trades), 2)
+                       if self.strategy_lanes else
+                       round(self.shadow_risk.equity, 2) if self.s.shadow_paper else None),
+            "open_positions": (sum(1 for lane in self.strategy_lanes.values() if lane.broker.position)
+                               if self.strategy_lanes else
+                               sum(1 for s in self.shadow_markets.values() if s.broker.position)),
             "trades": len(trades),
             "pnl": round(sum(t["pnl"] for t in trades), 2),
             "win_rate": round(len(wins) / len(trades) * 100, 1) if trades else None,
+            "by_strategy": by_strategy,
         }
 
     def _narrate(self, context: str):
@@ -758,8 +848,6 @@ class Agent:
             for sym, m in self.markets.items():
                 try:
                     out = self._evaluate_market(m)
-                    if self.s.shadow_paper:
-                        self._evaluate_shadow(m.symbol, m.last_candles)
                 except Exception as e:
                     m.last_error = str(e)[:300]
                     m.pending = None
@@ -767,6 +855,15 @@ class Agent:
                     self._feed("error", f"[{sym}] {m.last_error}")
                     log.exception("evaluation failed for %s", sym)
                 m.last_outcome = outcomes[sym] = out
+                if sym in self.shadow_markets:
+                    try:
+                        self._evaluate_shadow(sym, m.last_candles)
+                    except Exception:
+                        # A staging simulator must never stop live position
+                        # management or mark the live market unhealthy.
+                        log.exception("shadow evaluation failed for %s", sym)
+            if self.strategy_lanes and self.execution_enabled:
+                self._evaluate_strategy_lanes()
             self.last_cycle_at = self._now()
             self.last_cycle_ms = round((time.monotonic() - started) * 1000)
             return outcomes
@@ -831,6 +928,136 @@ class Agent:
                              "size": plan.size_contracts, "sl": plan.stop_loss,
                              "tp": plan.take_profit, "strategy": strategy,
                              "contract_value": shadow.broker.contract_value(price)}
+
+    def _lane_candles(self, lane: StrategyLane) -> list[dict]:
+        """Use the live cycle's base feed or a short-lived per-timeframe cache."""
+        if lane.resolution == self.s.resolution:
+            return self.markets[lane.symbol].last_candles
+        key = (lane.symbol, lane.resolution)
+        now = self.clock()
+        cached = self._lane_candle_cache.get(key)
+        if cached and now - cached[0] < max(5, min(30, self.s.poll_seconds * 2)):
+            return cached[1]
+        candles = self.fetch_candles(lane.symbol, lane.resolution)
+        self._lane_candle_cache[key] = (now, candles)
+        return candles
+
+    def _evaluate_strategy_lanes(self):
+        """Run every combo sub independently with simulated execution.
+
+        Each lane can hold a position at the same time as every other lane,
+        including another strategy on the same symbol.  Market data is live;
+        fills and P&L are explicitly paper-only.
+        """
+        for key, lane in self.strategy_lanes.items():
+            try:
+                candles = self._lane_candles(lane)
+                if not candles:
+                    lane.last_action, lane.last_reason = "WARMING_UP", "waiting for market data"
+                    continue
+                for candle in candles:
+                    values = [float(candle[k]) for k in ("open", "high", "low", "close")]
+                    if not all(math.isfinite(v) and v > 0 for v in values):
+                        raise ValueError("invalid OHLC market data")
+                price = float(candles[-1]["close"])
+                latest_stamp = candles[-1].get("time")
+                stamp = self._f(latest_stamp)
+                max_age = _RES_SECONDS.get(lane.resolution, 300) + max(60, self.s.poll_seconds * 2)
+                if stamp is None or not math.isfinite(stamp) or self.clock() - stamp > max_age:
+                    lane.last_action, lane.last_reason = "BLOCKED", "stale market data"
+                    lane.last_evaluated = self._now()
+                    continue
+
+                if lane.broker.position:
+                    bracket_candle = candles[-1]
+                    if lane.opened_market_candle == latest_stamp:
+                        bracket_candle = dict(bracket_candle, open=price, high=price, low=price)
+                    bracket = lane.broker.check_bracket(bracket_candle)
+                    if bracket:
+                        _, exit_price, reason = bracket
+                        entry = lane.open_trade
+                        pnl = lane.broker.close(exit_price)
+                        lane.risk.register_pnl(pnl)
+                        if entry:
+                            self.shadow_trades.append(
+                                self._mk_trade(lane.symbol, entry, self._now(), exit_price, pnl, reason)
+                            )
+                            self.shadow_trades = self.shadow_trades[-500:]
+                        lane.open_trade = None
+                        lane.opened_market_candle = None
+
+                signal_candles = candles
+                if getattr(lane.strategy, "closed_candles_only", False):
+                    seconds = _RES_SECONDS.get(lane.resolution, 300)
+                    signal_candles = [c for c in candles
+                                      if float(c["time"]) + seconds <= self.clock()]
+                    if any(float(b["time"]) - float(a["time"]) != seconds
+                           for a, b in zip(signal_candles, signal_candles[1:])):
+                        lane.last_action, lane.last_reason = "BLOCKED", "gap in closed candles"
+                        continue
+                required = getattr(lane.strategy, "required_candles", 1)
+                if len(signal_candles) < required:
+                    lane.last_action = "WARMING_UP"
+                    lane.last_reason = f"need {required} closed candles; have {len(signal_candles)}"
+                    continue
+
+                side = lane.broker.position.side if lane.broker.position else None
+                sig = lane.strategy.generate(signal_candles, side)
+                lane.last_action = sig.action.value
+                lane.last_reason = sig.reason
+                lane.last_evaluated = self._now()
+                lane.error = None
+
+                if sig.action == Action.EXIT and side:
+                    entry = lane.open_trade
+                    pnl = lane.broker.close(price)
+                    lane.risk.register_pnl(pnl)
+                    if entry:
+                        self.shadow_trades.append(
+                            self._mk_trade(lane.symbol, entry, self._now(), price, pnl, sig.reason)
+                        )
+                        self.shadow_trades = self.shadow_trades[-500:]
+                    lane.open_trade = None
+                    lane.opened_market_candle = None
+                    continue
+                if sig.action not in (Action.ENTER_LONG, Action.ENTER_SHORT) or side:
+                    continue
+                if self.entries_paused:
+                    lane.last_action, lane.last_reason = "BLOCKED", "new entries are paused"
+                    continue
+                signal_stamp = signal_candles[-1].get("time")
+                if signal_stamp == lane.last_entry_candle:
+                    lane.last_action, lane.last_reason = "HOLD", "already entered this signal candle"
+                    continue
+                if (sig.reference_price is not None and sig.max_entry_deviation is not None
+                        and abs(price - sig.reference_price) > sig.max_entry_deviation):
+                    lane.last_action, lane.last_reason = "BLOCKED", "price moved beyond entry limit"
+                    continue
+                trade_side = "long" if sig.action == Action.ENTER_LONG else "short"
+                plan = lane.risk.size_position(
+                    trade_side, price, lane.broker.contract_value(price),
+                    sig.stop_loss, sig.take_profit,
+                    open_notional=0, open_risk=0, open_positions=0,
+                    same_direction_positions=0,
+                    risk_pct=self.s.risk.risk_for(lane.tag),
+                )
+                if not plan.ok:
+                    lane.last_action, lane.last_reason = "BLOCKED", plan.reject_reason
+                    continue
+                lane.broker.open(plan)
+                lane.last_entry_candle = signal_stamp
+                lane.opened_market_candle = latest_stamp
+                lane.open_trade = {
+                    "entry_ts": self._now(), "side": trade_side, "entry": price,
+                    "size": plan.size_contracts, "sl": plan.stop_loss,
+                    "tp": plan.take_profit, "strategy": lane.tag,
+                    "contract_value": lane.broker.contract_value(price),
+                }
+            except Exception as e:
+                lane.error = str(e)[:300]
+                lane.last_action, lane.last_reason = "ERROR", lane.error
+                lane.last_evaluated = self._now()
+                log.warning("paper strategy lane %s failed: %s", key, e)
 
     def _data_issue(self, m: Market) -> str:
         if m.last_error:

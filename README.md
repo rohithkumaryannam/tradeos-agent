@@ -72,9 +72,12 @@ positions; failed reconciliation blocks entries. Order fields follow the
 
 Dashboard risk edits are explicit runtime overrides stored in MongoDB/local
 state. The Risk page names the active source, lists differences from
-`config.yaml`, and can reset the override. The configured paper shadow lane
-runs the same market inputs through an independent simulated broker and reports
-its results under System Health.
+`config.yaml`, and can reset the override. In combo mode, every configured
+sub-strategy gets an independent paper broker for every allowed symbol. These
+lanes use current Delta candles and can hold opposing or concurrent simulated
+positions without waiting for the account's net live position to close. Lane
+status and paper-only results appear in Strategy Lab and System Health; live
+Delta execution remains one safely netted position per product.
 
 Use `/healthz` for uptime monitoring. It requires no dashboard cookie and
 returns HTTP 503 when the requested bot loop, Delta account, or configured

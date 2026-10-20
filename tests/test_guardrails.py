@@ -377,6 +377,45 @@ def test_shadow_lane_is_independent_from_live_broker(tmp_path):
     assert a.shadow_markets["BTCUSD"].broker.position is not None
 
 
+def test_combo_strategy_lanes_can_trade_same_symbol_without_waiting(tmp_path):
+    client = Mock()
+    client.get_product.return_value = {"id": 1, "contract_value": 1}
+    settings = Settings(
+        symbols=["BTCUSD"], shadow_paper=True, ai_narrate=False,
+        trade_log=str(tmp_path / "trades.csv"), strategy_name="combo",
+        strategy_params={"subs": [
+            {"name": "ema_crossover", "params": {"resolution": "5m"}, "tag": "lane_long"},
+            {"name": "ema_crossover", "params": {"resolution": "5m"}, "tag": "lane_short"},
+        ]},
+        risk=RiskConfig(strategy_risk_pct={"lane_long": 0.25, "lane_short": 0.25}),
+    )
+    a = Agent(settings, client=client)
+
+    class AlwaysEnter:
+        closed_candles_only = False
+        required_candles = 1
+
+        def __init__(self, action):
+            self.action = action
+
+        def generate(self, *_):
+            return Signal(self.action, "independent lane signal")
+
+    a.strategy_lanes["BTCUSD:lane_long"].strategy = AlwaysEnter(Action.ENTER_LONG)
+    a.strategy_lanes["BTCUSD:lane_short"].strategy = AlwaysEnter(Action.ENTER_SHORT)
+    a.markets["BTCUSD"].last_candles = candles()
+    a._evaluate_strategy_lanes()
+
+    assert a.strategy_lanes["BTCUSD:lane_long"].broker.position.side == "long"
+    assert a.strategy_lanes["BTCUSD:lane_short"].broker.position.side == "short"
+    assert a.markets["BTCUSD"].broker.position is None
+    snap = a._shadow_snapshot()
+    assert snap["independent"] is True
+    assert snap["lanes"] == 2
+    assert snap["open_positions"] == 2
+    assert snap["by_strategy"]["lane_long"]["symbols"]["BTCUSD"]["position"] == "long"
+
+
 def test_read_only_instance_cannot_execute(tmp_path):
     a = agent(tmp_path)
     a.execution_enabled = False
