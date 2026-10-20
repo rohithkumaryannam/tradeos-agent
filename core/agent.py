@@ -802,7 +802,7 @@ class Agent:
         threading.Thread(target=work, daemon=True).start()
 
     def ai_analysis(self, symbol: str | None = None) -> dict:
-        """On-demand Gemini read of current chart conditions for one symbol.
+        """On-demand AI report combining current conditions and trade results.
         Returns a dict the dashboard renders. Honest states: not-configured vs.
         unavailable vs. ok."""
         if not ai.available():
@@ -815,18 +815,36 @@ class Agent:
             c = closes(candles)
             ef, es, r = ema(c, 9), ema(c, 21), rsi(c, 14)
             pos = m.broker.position
+            recent = self.trades[-30:]
+            net = sum(float(t.get("pnl") or 0) for t in recent)
+            wins = sum(1 for t in recent if float(t.get("pnl") or 0) > 0)
+            by_strategy = {}
+            for t in recent:
+                name = t.get("strategy") or "unknown"
+                bucket = by_strategy.setdefault(name, {"trades": 0, "pnl": 0.0})
+                bucket["trades"] += 1
+                bucket["pnl"] += float(t.get("pnl") or 0)
+            trade_lines = " | ".join(
+                f"{t.get('symbol')} {t.get('strategy')} {t.get('side')} pnl={t.get('pnl')} reason={t.get('reason')}"
+                for t in recent[-12:]
+            ) or "no completed trades"
             prompt = (
                 f"{m.symbol} {self.s.resolution}. "
                 f"Price {c[-1]:.1f}, EMA9 {ef[-1]:.1f}, EMA21 {es[-1]:.1f}, "
                 f"RSI14 {r[-1]:.1f}. "
                 f"Position: {'flat' if not pos else pos.side}. "
-                "Give a brief read of trend, momentum and what to watch. 3 short sentences max."
+                f"Recent completed trades: {len(recent)}, wins={wins}, net_pnl={net:.2f}. "
+                f"By strategy: {by_strategy}. Trade details: {trade_lines}. "
+                "Report what is happening, which strategies placed trades, profit/loss, and the recorded reasons. "
+                "Mention when there is insufficient evidence. Use concise headings and bullets."
             )
         txt = ai.ask(prompt, system="You are a concise crypto market analyst. No financial advice disclaimers.",
                      max_tokens=300, thinking_budget=0)
         if not txt:
             return {"available": True, "text": "AI unavailable (check GEMINI_API_KEY / model / network)."}
-        return {"available": True, "text": txt, "model": ai.model_name(), "ts": self._now()}
+        return {"available": True, "text": txt, "model": ai.model_name(),
+                "trade_count": len(recent), "net_pnl": round(net, 2),
+                "by_strategy": by_strategy, "ts": self._now()}
 
     # ── data ──
     def fetch_candles(self, symbol: str, resolution: str | None = None) -> list[dict]:
