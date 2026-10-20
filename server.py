@@ -135,6 +135,11 @@ class BotRunner:
         self._control = threading.Lock()
         self.last_success_at: float | None = None
         self.last_error: str | None = None
+        # Desired mode loaded from persisted state.  A temporary Delta outage
+        # must not silently downgrade a live bot to PAPER; retry restoration
+        # while keeping execution fail-closed.
+        self._resume_mode: str | None = None
+        self._resume_next_at = 0.0
         self.owner = (os.getenv("TRADEOS_INSTANCE_ID") or os.getenv("RENDER_INSTANCE_ID")
                       or f"{socket.gethostname()}:{os.getpid()}")
 
@@ -163,6 +168,22 @@ class BotRunner:
         try:
             while not self._stop.is_set():
                 try:
+                    if self._resume_mode and self.agent.s.mode != self._resume_mode:
+                        now = time.time()
+                        if now < self._resume_next_at:
+                            self._stop.wait(min(self.agent.s.poll_seconds, self._resume_next_at - now))
+                            continue
+                        try:
+                            self.agent.set_mode(self._resume_mode)
+                            self._resume_mode = None
+                            self.last_error = None
+                            log.info("restored persisted mode %s", self.agent.s.mode)
+                        except Exception as e:
+                            self._resume_next_at = now + 30
+                            self.last_error = str(e)[:300]
+                            log.warning("mode restore pending (%s); retrying automatically", e)
+                            self._stop.wait(self.agent.s.poll_seconds)
+                            continue
                     self._set_execution_role()
                     self.agent.evaluate()
                     self.last_success_at = time.time()
@@ -223,7 +244,16 @@ def _resume_from_state():
         agent._align_strategy_data()
         state.save(resolution=agent.s.resolution, config_revision=CONFIG_REVISION)
         if st.get("mode"):
-            agent.set_mode(st["mode"])
+            desired_mode = str(st["mode"]).upper()
+            if desired_mode != agent.s.mode:
+                try:
+                    agent.set_mode(desired_mode)
+                except Exception as e:
+                    # Keep the desired mode and let the runner retry once the
+                    # exchange is reachable. Never evaluate live state in PAPER.
+                    runner._resume_mode = desired_mode
+                    runner._resume_next_at = time.time() + 30
+                    log.warning("Delta mode unavailable during boot; automatic restore scheduled: %s", e)
         if "auto" in st:
             agent.set_auto(st["auto"])
         agent.pause_entries(bool(st.get("entries_paused", False)))
@@ -267,6 +297,9 @@ def healthz():
         "delta": agent.s.mode != "DELTA_DEMO" or agent._acct.get("status") == "live",
         "mongo": not os.getenv("MONGODB_URI", "").strip() or db.available(),
     }
+    # A process that is serving HTTP while the trading loop is stopped is not
+    # healthy for uptime monitoring. This makes UptimeRobot catch silent stops.
+    checks["running"] = runner.running
     healthy = all(checks.values())
     body = {"status": "ok" if healthy else "unhealthy", "checks": checks,
             "running": runner.running, "last_cycle_at": agent.last_cycle_at,
