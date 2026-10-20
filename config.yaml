@@ -20,7 +20,7 @@ loop:
   poll_seconds: 5      # how often the agent wakes up and evaluates
 
 execution:
-  shadow_paper: true   # every combo sub gets an independent simulated execution lane
+  shadow_paper: false  # Delta-only: no simulated strategy execution lanes
 
 # ── Strategy selection ──
 # Every installed live strategy runs in the same combo, fetching its own
