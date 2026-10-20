@@ -94,10 +94,9 @@ class DeltaClient:
             )
         except requests.RequestException as e:
             # A hosted proxy can expire or reject traffic independently of
-            # Delta. Retry once without it so a healthy direct route can
-            # recover automatically; authentication/whitelist errors remain
-            # visible from Delta and are handled by the account backoff.
-            if self.session.proxies:
+            # Delta. Direct fallback is opt-in only: live accounts must keep
+            # using the whitelisted fixed-IP proxy by default.
+            if self.session.proxies and os.getenv("DELTA_DIRECT_FALLBACK", "false").strip().lower() in ("1", "true", "yes"):
                 try:
                     direct = requests.Session()
                     resp = direct.request(
