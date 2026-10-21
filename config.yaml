@@ -28,12 +28,13 @@ execution:
 # share one resolution. Each strategy is restricted to one unique Delta
 # product, preventing strategies from merging or reversing each other's
 # positions. Trade journal/analytics tag each by `tag` for comparison.
-#   - ema_5m / ema_15m: pure EMA 9/20 crossover, stop-and-reverse, no
-#     trend/chop filter — every cross is traded.
 #   - btc_trend_pullback: EMA20/50/200 trend stack + ADX >= 20, enters on a
 #     pullback to EMA20 with a confirmation candle, ATR-buffered structure
 #     stop, fixed-R target, and a time-stop. See
-#     strategies/btc_trend_pullback.py for the exact rules.
+#     strategies/btc_trend_pullback.py for the exact rules. Run twice here
+#     (btc_trend_pullback on BTCUSD, trend_pullback_xrp on XRPUSD) — XRPUSD
+#     previously ran the unfiltered ema_15m crossover (0% win rate live), so
+#     it was swapped for this filtered trend system instead.
 #   - mean_reversion: 15m low-ADX Bollinger-band extremes confirmed by RSI,
 #     with an ATR stop, middle-band target, and 32-bar time-stop.
 #   - donchian_breakout: 15m volume-confirmed channel breakout.
@@ -54,7 +55,7 @@ strategy:
     subs:
       - { name: btc_trend_pullback, tag: btc_trend_pullback, symbols: [BTCUSD] }
       - { name: mean_reversion, tag: mean_reversion, symbols: [ETHUSD] }
-      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m, symbols: [XRPUSD] }
+      - { name: btc_trend_pullback, tag: trend_pullback_xrp, symbols: [XRPUSD] }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD] }
       - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
       - { name: time_series_momentum, tag: time_series_momentum, symbols: [1000SHIBUSD] }
@@ -79,9 +80,8 @@ risk:
   min_reward_risk: 1.5       # reject entries offering less than 1.5R
   max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
   strategy_risk_pct:         # percent of current account equity per new trade
-    ema_5m: 0.25
-    ema_15m: 0.25
     btc_trend_pullback: 0.25
+    trend_pullback_xrp: 0.25
     mean_reversion: 0.25
     donchian_breakout: 0.25
     btc_bms: 0.25

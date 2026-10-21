@@ -22,7 +22,7 @@ def test_configured_combo_assigns_one_active_strategy_per_market(tmp_path):
     assert assignments == {
         "BTCUSD": ["btc_trend_pullback"],
         "ETHUSD": ["mean_reversion"],
-        "XRPUSD": ["ema_15m"],
+        "XRPUSD": ["trend_pullback_xrp"],
         "DOGEUSD": ["donchian_breakout"],
         "ADAUSD": ["btc_bms"],
         "1000SHIBUSD": ["time_series_momentum"],
