@@ -20,9 +20,9 @@ def test_configured_combo_assigns_one_active_strategy_per_market(tmp_path):
         for symbol in settings.symbols
     }
     assert assignments == {
-        "BTCUSD": ["ema_15m"],
-        "ETHUSD": ["ema_5m"],
-        "XRPUSD": ["mean_reversion"],
+        "BTCUSD": ["btc_trend_pullback"],
+        "ETHUSD": ["mean_reversion"],
+        "XRPUSD": ["ema_15m"],
         "DOGEUSD": ["donchian_breakout"],
         "ADAUSD": ["btc_bms"],
         "1000SHIBUSD": ["time_series_momentum"],

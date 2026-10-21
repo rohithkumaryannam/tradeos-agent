@@ -47,9 +47,9 @@ strategy:
   name: combo
   params:
     subs:
-      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m, symbols: [BTCUSD] }
-      - { name: ema_crossover, params: { resolution: "5m" }, tag: ema_5m, symbols: [ETHUSD] }
-      - { name: mean_reversion, tag: mean_reversion, symbols: [XRPUSD] }
+      - { name: btc_trend_pullback, tag: btc_trend_pullback, symbols: [BTCUSD] }
+      - { name: mean_reversion, tag: mean_reversion, symbols: [ETHUSD] }
+      - { name: ema_crossover, params: { resolution: "15m" }, tag: ema_15m, symbols: [XRPUSD] }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD] }
       - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
       - { name: time_series_momentum, tag: time_series_momentum, symbols: [1000SHIBUSD] }
