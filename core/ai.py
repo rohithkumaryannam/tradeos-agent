@@ -75,8 +75,11 @@ def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
                 log.warning("OpenRouter %s -> %s", model_name(), r.status_code)
                 return None
             choices = (r.json().get("choices") or [{}])
-            text = (choices[0].get("message") or {}).get("content", "")
-            return text.strip() or None
+            message = choices[0].get("message") or {}
+            text = message.get("content") or message.get("reasoning") or ""
+            if isinstance(text, list):
+                text = "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in text)
+            return str(text).strip() or None
         except Exception as e:
             log.warning("OpenRouter call failed: %s", e)
             return None
