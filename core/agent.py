@@ -806,7 +806,7 @@ class Agent:
         Returns a dict the dashboard renders. Honest states: not-configured vs.
         unavailable vs. ok."""
         if not ai.available():
-            return {"available": False, "text": "Gemini key not configured (set GEMINI_API_KEY in .env)."}
+            return {"available": False, "text": "AI provider not configured (set OPENROUTER_API_KEY)."}
         with self.lock:
             m = self._market(symbol)
             candles = m.last_candles
@@ -841,7 +841,7 @@ class Agent:
         txt = ai.ask(prompt, system="You are a concise crypto market analyst. No financial advice disclaimers.",
                      max_tokens=300, thinking_budget=0)
         if not txt:
-            return {"available": True, "text": "AI unavailable (check GEMINI_API_KEY / model / network)."}
+            return {"available": True, "text": "AI unavailable (check OpenRouter key, model, or network)."}
         return {"available": True, "text": txt, "model": ai.model_name(),
                 "trade_count": len(recent), "net_pnl": round(net, 2),
                 "by_strategy": by_strategy, "ts": self._now()}
