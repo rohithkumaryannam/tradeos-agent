@@ -21,3 +21,4 @@ data/runtime_state.json
 
 # Downloaded public research candles
 data/research/
+.vercel
