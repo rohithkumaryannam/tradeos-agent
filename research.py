@@ -21,7 +21,8 @@ from core.settings import Settings, RiskConfig
 from run import ReplayClient
 
 ROOT = Path(__file__).resolve().parent
-CANDIDATES = ("ema_crossover", "donchian_breakout")
+CANDIDATES = ("ema_crossover", "donchian_breakout", "btc_trend_pullback",
+              "mean_reversion", "btc_bms", "time_series_momentum", "darkknight_sol")
 PUBLIC_API = "https://api.india.delta.exchange"
 
 
@@ -75,7 +76,11 @@ def compare_dataset(payload, fee_bps=5, slippage_bps=2, candidates=CANDIDATES):
                 a = Agent(settings, client=ReplayClient(float(payload["contract_size"])))
                 result = simulate(a, candles, warmup=warmup, fee_bps=fee_bps, slippage_bps=slippage_bps)
                 result["sample"] = sample
-                result["strategy_params"] = a.markets[payload["symbol"]].strategy.params
+                # Exclude injected plumbing (e.g. _fetch_candles, a bound
+                # method) that every strategy receives but isn't JSON-safe.
+                result["strategy_params"] = {k: v for k, v in
+                    a.markets[payload["symbol"]].strategy.params.items()
+                    if not k.startswith("_")}
                 result["sample_note"] = "Too few trades for a stable estimate" if result["analytics"]["trades"] < 30 else "Historical estimate; forward validation required"
                 rows.append(result)
     return rows
