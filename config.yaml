@@ -11,7 +11,7 @@ market:
   # mapping lets strategies own independent live positions while
   # still sharing the account's equity and deterministic risk controls.
   # Delta testnet currently has no BNBUSD contract; 1000SHIBUSD fills that slot.
-  symbol: [BTCUSD, ETHUSD, XRPUSD, DOGEUSD, ADAUSD, 1000SHIBUSD, SOLUSD]
+  symbol: [ETHUSD, DOGEUSD, ADAUSD, 1000SHIBUSD, SOLUSD]
   resolution: "15m"    # base feed for BTC EMA 15m; other assignments fetch
                         # their own configured timeframe independently
   lookback: 300        # how many recent candles to pull each cycle
@@ -30,15 +30,17 @@ execution:
 # positions. Trade journal/analytics tag each by `tag` for comparison.
 #   - mean_reversion: 15m low-ADX Bollinger-band extremes confirmed by RSI,
 #     with an ATR stop, middle-band target, and 32-bar time-stop.
-#   - donchian_breakout: 15m volume-confirmed channel breakout. Run three
-#     times here (donchian_breakout/donchian_btc/donchian_xrp on
-#     DOGEUSD/BTCUSD/XRPUSD) — a real 180-day holdout backtest
-#     (see research.py) showed it was the only strategy here with positive
-#     expectancy (DOGEUSD: +6.9% net, 26% win rate, 84 trades), while
-#     btc_trend_pullback — previously on BTCUSD and XRPUSD — lost money on
-#     both (-16.9% and -5.7% net) despite textbook expectations otherwise.
-#     btc_trend_pullback itself is still installed but not currently
-#     assigned to any symbol pending further work.
+#   - donchian_breakout: 15m volume-confirmed channel breakout. ONLY on
+#     DOGEUSD — a 1-year holdout backtest (see research.py) confirmed real
+#     positive expectancy there (+6.9% net, 26% win rate, 84 trades), but
+#     the SAME strategy lost heavily on every other coin it was tried on
+#     with large, trustworthy samples: BTCUSD -32.6% (194 holdout trades),
+#     XRPUSD -25.8% (183 holdout trades), ETHUSD -11.0% (93 trades). The
+#     edge is specific to DOGEUSD, not a property of the strategy itself —
+#     do not re-add this to another symbol without backtesting that symbol
+#     specifically first. BTCUSD and XRPUSD are paused (removed from
+#     market.symbol below) pending a real replacement strategy; they are
+#     not currently trading anything.
 #   - btc_bms: 5m price-action zone rejection with structure exits.
 #   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
 #   - darkknight_sol: 4H EMA50/200 trend filter + support/resistance breakout,
@@ -54,9 +56,7 @@ strategy:
   name: combo
   params:
     subs:
-      - { name: donchian_breakout, tag: donchian_btc, symbols: [BTCUSD] }
       - { name: mean_reversion, tag: mean_reversion, symbols: [ETHUSD] }
-      - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD] }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD] }
       - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
       - { name: time_series_momentum, tag: time_series_momentum, symbols: [1000SHIBUSD] }
@@ -81,8 +81,6 @@ risk:
   min_reward_risk: 1.5       # reject entries offering less than 1.5R
   max_stop_distance_pct: 5.0 # reject abnormally wide or malformed stops
   strategy_risk_pct:         # percent of current account equity per new trade
-    donchian_btc: 0.25
-    donchian_xrp: 0.25
     mean_reversion: 0.25
     donchian_breakout: 0.25
     btc_bms: 0.25
