@@ -11,7 +11,7 @@ market:
   # mapping lets strategies own independent live positions while
   # still sharing the account's equity and deterministic risk controls.
   # Delta testnet currently has no BNBUSD contract; 1000SHIBUSD fills that slot.
-  symbol: [BTCUSD, ETHUSD, XRPUSD, DOGEUSD, ADAUSD, 1000SHIBUSD, SOLUSD]
+  symbol: [BTCUSD, ETHUSD, XRPUSD, DOGEUSD, ADAUSD, SOLUSD]
   resolution: "15m"    # base feed for BTC EMA 15m; other assignments fetch
                         # their own configured timeframe independently
   lookback: 300        # how many recent candles to pull each cycle
@@ -41,6 +41,9 @@ execution:
 #     risk, not a recommendation.
 #   - btc_bms: 5m price-action zone rejection with structure exits.
 #   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
+#     Was on 1000SHIBUSD; removed 2026-10-23 at the user's request after
+#     live losses. time_series_momentum itself is still installed but not
+#     currently assigned to any symbol.
 #   - darkknight_sol: 4H EMA50/200 trend filter + support/resistance breakout,
 #     RSI + volume confirmation, fixed SL/TP from entry. Reconstructed from a
 #     public TradingView listing's description (source is invite-only, so
@@ -59,7 +62,6 @@ strategy:
       - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD] }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD] }
       - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
-      - { name: time_series_momentum, tag: time_series_momentum, symbols: [1000SHIBUSD] }
       - { name: darkknight_sol, tag: darkknight_sol, symbols: [SOLUSD] }
 
 # ── Risk engine (applies to every trade) ──
@@ -86,7 +88,6 @@ risk:
     mean_reversion: 0.25
     donchian_breakout: 0.25
     btc_bms: 0.25
-    time_series_momentum: 0.25
     darkknight_sol: 0.25
 
 logging:

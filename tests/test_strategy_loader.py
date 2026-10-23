@@ -25,7 +25,6 @@ def test_configured_combo_assigns_one_active_strategy_per_market(tmp_path):
         "XRPUSD": ["donchian_xrp"],
         "DOGEUSD": ["donchian_breakout"],
         "ADAUSD": ["btc_bms"],
-        "1000SHIBUSD": ["time_series_momentum"],
         "SOLUSD": ["darkknight_sol"],
     }
     tags = [items[0] for items in assignments.values()]
