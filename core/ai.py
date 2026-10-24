@@ -109,10 +109,13 @@ def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
                    "X-Title": "TradeOS"}
         try:
             r = requests.post(_OPENROUTER_URL, headers=headers, json=payload, timeout=timeout)
-            if r.status_code >= 400 and json_mode:
-                # Some free-tier models reject response_format outright — retry plain.
-                log.warning("OpenRouter %s -> %s with response_format, retrying without",
-                            model_name(), r.status_code)
+            if r.status_code == 400 and json_mode:
+                # A 400 can mean the model rejected response_format outright —
+                # retry plain. Never retry on 5xx/429: that's an upstream
+                # outage, not a parameter problem, and doubling the wait on
+                # an already-failing free-tier model just stacks timeouts.
+                log.warning("OpenRouter %s -> 400 with response_format, retrying without",
+                            model_name())
                 payload = dict(payload)
                 del payload["response_format"]
                 r = requests.post(_OPENROUTER_URL, headers=headers, json=payload, timeout=timeout)
