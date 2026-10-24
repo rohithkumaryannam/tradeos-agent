@@ -7,7 +7,7 @@ from pathlib import Path
 from core.settings import Settings, RiskConfig
 from core.risk import RiskEngine, TradePlan
 from core.broker import PaperBroker
-from core.agent import Agent, _round_price
+from core.agent import Agent, _round_price, _price_str
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -70,6 +70,37 @@ def test_round_price_scales_decimals_to_magnitude():
     assert _round_price(0.07894) == 0.0789            # DOGE-scale: 4 decimals
     assert _round_price(0.005018) == 0.005018         # SHIB-scale: 6 decimals
     assert _round_price(None) is None
+
+
+def test_price_str_survives_a_csv_roundtrip_for_cheap_coins():
+    # The actual root cause behind a real incident: tlog.write() used to
+    # format prices with a flat f"{p:.1f}", which wrote "0.0" to the
+    # PERSISTED log for a SHIB-scale price (~0.005). On restart,
+    # _load_trades_from_log() read that "0.0" back as the position's real
+    # entry price and later used it in live P&L math, turning a real ~$4
+    # profit into a reported ~$94 loss. _price_str must round-trip cleanly.
+    assert float(_price_str(0.005018)) == 0.005018
+    assert float(_price_str(79_688.456)) == 79_688.5
+    assert _price_str(None) == ""
+
+
+def test_restart_reconstructs_open_trade_entry_price_without_corruption(tmp_path):
+    log_path = str(tmp_path / "trades.csv")
+    s1 = Settings(symbols=["BTCUSD"], ai_narrate=False, trade_log=log_path)
+    agent1 = Agent(s1)
+    # Simulate what _do_entry's tlog.write call does for a SHIB-scale entry
+    # price, the same call site responsible for the real incident.
+    agent1.tlog.write("ENTRY", side="short", price=_price_str(0.005018),
+                       size=19, sl=_price_str(0.0055), tp=_price_str(0.0045),
+                       equity="630.22", reason="momentum", strategy="time_series_momentum",
+                       symbol="BTCUSD")
+    # A fresh Agent over the same log simulates a restart: _load_trades_from_log()
+    # must reconstruct the pending entry's price at full precision, not 0.0.
+    s2 = Settings(symbols=["BTCUSD"], ai_narrate=False, trade_log=log_path)
+    agent2 = Agent(s2)
+    pending = agent2.markets["BTCUSD"].open_trade
+    assert pending is not None
+    assert pending["entry"] == 0.005018
 
 
 def test_trade_journal_entry_exit_keep_precision_for_cheap_coins(tmp_path):

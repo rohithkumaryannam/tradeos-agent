@@ -114,6 +114,17 @@ def _round_price(p: float | None) -> float | None:
     return round(p, d)
 
 
+def _price_str(p: float | None) -> str:
+    """Like _round_price, but for the persisted trade-log text fields
+    (tlog.write): a flat f"{p:.1f}" was the ORIGINAL source of the bug above
+    — it wrote "0.0" for SHIB's ~0.005 straight into the log, and that
+    corrupted 0.0 got read back as the position's real entry price after
+    every restart, producing wildly wrong realized P&L once the position
+    closed (a -$93.90 "loss" that was actually a small real profit)."""
+    r = _round_price(p)
+    return "" if r is None else str(r)
+
+
 class Agent:
     def __init__(self, settings: Settings, client: DeltaClient | None = None, clock=None):
         self.s = settings
@@ -776,9 +787,9 @@ class Agent:
             self.trades = self.trades[-self.trade_history_limit:]
             m.open_trade = None
             db.clear_position_bracket(m.symbol)
-            self._feed("exit", f"[{m.symbol}] {entry['side'].upper()} @ {exit_price:.1f}  "
+            self._feed("exit", f"[{m.symbol}] {entry['side'].upper()} @ {_round_price(exit_price)}  "
                                f"PnL {pnl:+.2f}  ({reason})")
-            self.tlog.write("EXIT", side=entry["side"], price=f"{exit_price:.1f}",
+            self.tlog.write("EXIT", side=entry["side"], price=_price_str(exit_price),
                             pnl=f"{pnl:.2f}", equity=f"{self.risk.equity:.2f}",
                             reason=reason, symbol=m.symbol)
             return True
@@ -1502,7 +1513,7 @@ class Agent:
         if not plan.ok:
             m.last_rejected_entry = rejection_key + (plan.reject_reason,)
             self._feed("reject", f"[{m.symbol}] {plan.reject_reason}")
-            self.tlog.write("REJECT", side=side, price=f"{price:.1f}",
+            self.tlog.write("REJECT", side=side, price=_price_str(price),
                             reason=plan.reject_reason, equity=f"{self.risk.equity:.2f}",
                             symbol=m.symbol)
             return Outcome("reject", plan.reject_reason)
@@ -1530,13 +1541,13 @@ class Agent:
                        f"entry (a leg may have been rejected, e.g. for violating margin/"
                        f"liquidation bounds) — falling back to local stop/target protection, "
                        f"which only works while this process keeps running.")
-        self._feed("entry", f"[{m.symbol}/{strat}] {side.upper()} {plan.size_contracts}c @ {price:.1f} "
-                            f"SL {plan.stop_loss:.0f} TP {plan.take_profit:.0f}")
-        self._narrate(f"Opened {m.symbol} {side.upper()} {plan.size_contracts} contracts @ {price:.1f}, "
-                      f"SL {plan.stop_loss:.0f}, TP {plan.take_profit:.0f}. Signal: {sig.reason}")
-        self.tlog.write("ENTRY", side=side, price=f"{price:.1f}",
-                        size=plan.size_contracts, sl=f"{plan.stop_loss:.1f}",
-                        tp=f"{plan.take_profit:.1f}", equity=f"{self.risk.equity:.2f}",
+        self._feed("entry", f"[{m.symbol}/{strat}] {side.upper()} {plan.size_contracts}c @ {_round_price(price)} "
+                            f"SL {_round_price(plan.stop_loss)} TP {_round_price(plan.take_profit)}")
+        self._narrate(f"Opened {m.symbol} {side.upper()} {plan.size_contracts} contracts @ {_round_price(price)}, "
+                      f"SL {_round_price(plan.stop_loss)}, TP {_round_price(plan.take_profit)}. Signal: {sig.reason}")
+        self.tlog.write("ENTRY", side=side, price=_price_str(price),
+                        size=plan.size_contracts, sl=_price_str(plan.stop_loss),
+                        tp=_price_str(plan.take_profit), equity=f"{self.risk.equity:.2f}",
                         reason=sig.reason, strategy=strat, symbol=m.symbol)
         return Outcome("entry", sig.reason)
 
@@ -1554,11 +1565,11 @@ class Agent:
             self.trades = self.trades[-self.trade_history_limit:]
             m.open_trade = None
         db.clear_position_bracket(m.symbol)
-        self._feed("exit", f"[{m.symbol}] {side.upper()} @ {exit_price:.1f}  PnL {pnl:+.2f}  ({why})")
-        self.tlog.write("EXIT", side=side, price=f"{exit_price:.1f}",
+        self._feed("exit", f"[{m.symbol}] {side.upper()} @ {_round_price(exit_price)}  PnL {pnl:+.2f}  ({why})")
+        self.tlog.write("EXIT", side=side, price=_price_str(exit_price),
                         pnl=f"{pnl:.2f}", equity=f"{self.risk.equity:.2f}", reason=why,
                         symbol=m.symbol)
-        self._narrate(f"Closed {m.symbol} {side.upper()} @ {exit_price:.1f} for PnL {pnl:+.2f}. Reason: {why}")
+        self._narrate(f"Closed {m.symbol} {side.upper()} @ {_round_price(exit_price)} for PnL {pnl:+.2f}. Reason: {why}")
         return Outcome("exit", f"{why} | PnL {pnl:+.2f}")
 
     def _portfolio(self) -> dict:
