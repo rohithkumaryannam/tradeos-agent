@@ -125,18 +125,37 @@ $("aiBtn").onclick = async () => {
 // explicitly clicks Confirm, which calls /api/ai/execute.
 (function () {
   const jbtn = $("jarvisBtn"), overlay = $("jarvisOverlay"), closeBtn = $("jarvisClose"),
-        orb = $("jarvisOrb"), stateLabel = $("jarvisState"), jheard = $("jarvisHeard"),
-        jreply = $("jarvisReply"), jconfirmBox = $("jarvisConfirm"),
-        jconfirmBtn = $("jarvisConfirmBtn"), jcancelBtn = $("jarvisCancelBtn"),
-        micAgainBtn = $("jarvisMicAgain");
+        stateLabel = $("jarvisState"), coreNote = $("jarvisCoreNote"), chat = $("jarvisChat"),
+        jconfirmBox = $("jarvisConfirm"), jconfirmBtn = $("jarvisConfirmBtn"),
+        jcancelBtn = $("jarvisCancelBtn"), micAgainBtn = $("jarvisMicAgain"),
+        bg = $("jarvisBg"), timeEl = $("jarvisTime"), linkEl = $("jarvisLink");
   if (!jbtn || !overlay) return;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis;
   let pendingAction = null, recognizing = false, recognizer = null;
 
   function setOrbState(state, label) {
-    orb.className = "jarvis-orb" + (state ? " " + state : "");
+    overlay.style.setProperty("--jh",
+      state === "listening" ? "330" : state === "thinking" ? "45" : state === "speaking" ? "150" : "190");
     stateLabel.textContent = label;
+    coreNote.textContent = state === "listening" ? "AWAITING VOICE INPUT"
+      : state === "thinking" ? "PROCESSING REQUEST"
+      : state === "speaking" ? "TRANSMITTING RESPONSE"
+      : "SYSTEM OPERATIONAL";
+    if (linkEl) {
+      linkEl.textContent = state ? "ACTIVE" : "STANDBY";
+      linkEl.className = state ? "live" : "";
+    }
+  }
+
+  function addMsg(who, text) {
+    if (!chat) return;
+    const row = document.createElement("div");
+    row.className = "jarvis-msg " + (who === "you" ? "you" : "jarvis");
+    row.innerHTML = `<i>${who === "you" ? "YOU" : "JARVIS"}</i>${esc(text)}`;
+    chat.appendChild(row);
+    chat.scrollTop = chat.scrollHeight;
+    return row;
   }
 
   function speak(text, onDone) {
@@ -151,6 +170,85 @@ $("aiBtn").onclick = async () => {
       synth.speak(u);
     } catch (e) { if (onDone) onDone(); }
   }
+
+  // ── Canvas HUD background: pulsing reactor core + rotating wireframe globe ──
+  let animRunning = false, animFrame = null;
+  function startBgAnim() {
+    if (!bg || animRunning) return;
+    animRunning = true;
+    const ctx = bg.getContext("2d");
+    let t = 0;
+    function resize() { bg.width = overlay.clientWidth; bg.height = overlay.clientHeight; }
+    resize();
+    window.addEventListener("resize", resize);
+    function hue() { return getComputedStyle(overlay).getPropertyValue("--jh").trim() || "190"; }
+    function frame() {
+      if (!animRunning) return;
+      t += 0.016;
+      const w = bg.width, h = bg.height, cx = w / 2, cy = h / 2 + 40;
+      const h1 = hue();
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "#010408";
+      ctx.fillRect(0, 0, w, h);
+      // rotating wireframe globe
+      const R = Math.min(w, h) * 0.26;
+      ctx.strokeStyle = `hsla(${h1},100%,62%,0.22)`;
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 7; i++) {
+        const ry = R * Math.cos((i / 6 - 0.5) * Math.PI);
+        const rx = R * Math.sin(Math.acos(Math.cos((i / 6 - 0.5) * Math.PI)));
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, Math.max(rx, 2), Math.abs(ry) * 0 + R * 0.12, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      for (let i = 0; i < 8; i++) {
+        const a = t * 0.2 + (i / 8) * Math.PI;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, R * Math.abs(Math.cos(a)) + 0.5, R, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // reactor core pulse
+      const pulse = 1 + 0.08 * Math.sin(t * 3);
+      const coreR = R * 0.32 * pulse;
+      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.2);
+      grad.addColorStop(0, `hsla(${h1},100%,75%,0.9)`);
+      grad.addColorStop(0.4, `hsla(${h1},100%,60%,0.35)`);
+      grad.addColorStop(1, `hsla(${h1},100%,50%,0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(cx, cy, coreR * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = `hsla(${h1},100%,80%,0.9)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+      ctx.stroke();
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, coreR * (1.3 + i * 0.22), t * (0.5 + i * 0.3), t * (0.5 + i * 0.3) + 4.2);
+        ctx.strokeStyle = `hsla(${h1},100%,70%,${0.35 - i * 0.1})`;
+        ctx.stroke();
+      }
+      animFrame = requestAnimationFrame(frame);
+    }
+    frame();
+  }
+  function stopBgAnim() {
+    animRunning = false;
+    if (animFrame) cancelAnimationFrame(animFrame);
+  }
+
+  // ── Clock ──
+  let clockTimer = null;
+  function startClock() {
+    function tick() {
+      if (!timeEl) return;
+      timeEl.textContent = new Date().toLocaleTimeString("en-US", { hour12: false });
+    }
+    tick();
+    clockTimer = setInterval(tick, 1000);
+  }
+  function stopClock() { if (clockTimer) clearInterval(clockTimer); clockTimer = null; }
 
   function describeAction(action) {
     if (!action) return "";
@@ -169,47 +267,50 @@ $("aiBtn").onclick = async () => {
 
   function openOverlay() {
     overlay.hidden = false;
-    jheard.textContent = "";
-    jreply.textContent = "";
+    if (chat) chat.innerHTML = "";
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
     pendingAction = null;
+    setOrbState("", "IDLE");
+    startBgAnim();
+    startClock();
   }
   function closeOverlay() {
     overlay.hidden = true;
     if (synth) synth.cancel();
     if (recognizing && recognizer) recognizer.stop();
+    stopBgAnim();
+    stopClock();
   }
   closeBtn.onclick = closeOverlay;
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeOverlay(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) closeOverlay(); });
 
   async function sendToJarvis(text) {
-    jheard.textContent = `"${text}"`;
-    jreply.textContent = "";
+    addMsg("you", text);
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
     pendingAction = null;
-    setOrbState("thinking", "THINKING…");
+    setOrbState("thinking", "THINKING");
     try {
       const r = await fetch("/api/ai/command", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
       const d = await r.json();
-      jreply.textContent = d.reply || "No response.";
+      addMsg("jarvis", d.reply || "No response.");
       if (d.action) {
         pendingAction = d.action;
         jconfirmBtn.textContent = "Confirm: " + describeAction(d.action);
       }
       speak(d.reply, () => {
-        setOrbState("", "READY");
+        setOrbState("", "IDLE");
         if (pendingAction) jconfirmBox.hidden = false;
         else micAgainBtn.hidden = false;
       });
     } catch (e) {
-      jreply.textContent = "Request failed.";
-      setOrbState("", "READY");
+      addMsg("jarvis", "Request failed.");
+      setOrbState("", "IDLE");
       micAgainBtn.hidden = false;
     }
   }
@@ -219,8 +320,8 @@ $("aiBtn").onclick = async () => {
     const action = pendingAction;
     pendingAction = null;
     jconfirmBox.hidden = true;
-    jreply.textContent = "Working…";
-    setOrbState("thinking", "EXECUTING…");
+    addMsg("jarvis", "Working…");
+    setOrbState("thinking", "EXECUTING");
     try {
       const r = await fetch("/api/ai/execute", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -229,29 +330,27 @@ $("aiBtn").onclick = async () => {
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "failed");
       const msg = "Done — " + describeAction(action) + ".";
-      jreply.textContent = msg;
-      speak(msg, () => { setOrbState("", "READY"); micAgainBtn.hidden = false; });
+      addMsg("jarvis", msg);
+      speak(msg, () => { setOrbState("", "IDLE"); micAgainBtn.hidden = false; });
       const state = await fetch("/api/state");
       if (state.ok) { last = await state.json(); render(last); }
     } catch (e) {
-      jreply.textContent = "Failed: " + (e.message || "unknown error");
-      speak("That failed.", () => { setOrbState("", "READY"); micAgainBtn.hidden = false; });
+      addMsg("jarvis", "Failed: " + (e.message || "unknown error"));
+      speak("That failed.", () => { setOrbState("", "IDLE"); micAgainBtn.hidden = false; });
     }
   };
   jcancelBtn.onclick = () => {
     pendingAction = null; jconfirmBox.hidden = true;
-    jreply.textContent += " (cancelled)"; micAgainBtn.hidden = false;
+    addMsg("jarvis", "Cancelled."); micAgainBtn.hidden = false;
   };
 
   function startListening() {
     if (!recognizer || recognizing) return;
     recognizing = true;
-    setOrbState("listening", "LISTENING…");
-    jheard.textContent = "";
-    jreply.textContent = "";
+    setOrbState("listening", "LISTENING");
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
-    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("", "READY"); }
+    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("", "IDLE"); }
   }
   micAgainBtn.onclick = startListening;
 
@@ -264,7 +363,7 @@ $("aiBtn").onclick = async () => {
   recognizer.interimResults = false;
   recognizer.maxAlternatives = 1;
   recognizer.onresult = (e) => sendToJarvis(e.results[0][0].transcript);
-  recognizer.onerror = () => { recognizing = false; if (!overlay.hidden && !jheard.textContent) { setOrbState("", "READY"); micAgainBtn.hidden = false; } };
+  recognizer.onerror = () => { recognizing = false; if (!overlay.hidden) { setOrbState("", "IDLE"); micAgainBtn.hidden = false; } };
   recognizer.onend = () => { recognizing = false; };
   jbtn.onclick = () => { openOverlay(); startListening(); };
 })();
