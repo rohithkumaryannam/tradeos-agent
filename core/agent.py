@@ -102,6 +102,18 @@ class StrategyLane:
     error: str | None = None
 
 
+def _round_price(p: float | None) -> float | None:
+    """Round a price for storage/display, scaling decimals to its own
+    magnitude. A flat round(p, 1) silently destroys sub-$1 prices — e.g.
+    DOGE ~0.079 -> 0.1, or a micro-cap like SHIB's ~0.005 -> 0.0 — which
+    corrupted the trade journal's entry/exit prices for any coin under $1."""
+    if p is None:
+        return None
+    v = abs(p)
+    d = 1 if v >= 100 else 2 if v >= 1 else 4 if v >= 0.01 else 6 if v >= 0.0001 else 8
+    return round(p, d)
+
+
 class Agent:
     def __init__(self, settings: Settings, client: DeltaClient | None = None, clock=None):
         self.s = settings
@@ -652,9 +664,9 @@ class Agent:
             "symbol": symbol,
             "entry_ts": e.get("entry_ts"), "exit_ts": exit_ts,
             "strategy": e.get("strategy") or "—",
-            "side": side, "entry": round(entry, 1), "exit": round(exit_price, 1),
-            "size": size, "sl": round(sl, 1) if sl else None,
-            "tp": round(e["tp"], 1) if e.get("tp") else None,
+            "side": side, "entry": _round_price(entry), "exit": _round_price(exit_price),
+            "size": size, "sl": _round_price(sl) if sl else None,
+            "tp": _round_price(e.get("tp")) if e.get("tp") else None,
             "pnl": round(pnl, 2),
             "pnl_pct": round(pnl / notional * 100, 2) if notional else None,
             "r": r,

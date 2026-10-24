@@ -7,7 +7,7 @@ from pathlib import Path
 from core.settings import Settings, RiskConfig
 from core.risk import RiskEngine, TradePlan
 from core.broker import PaperBroker
-from core.agent import Agent
+from core.agent import Agent, _round_price
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -58,6 +58,33 @@ def test_backtest_over_synthetic_is_finite(tmp_path):
     assert snap["active_strategies"] == ["ema_crossover"]
     assert isinstance(snap["equity"], float) and snap["equity"] > 0
     assert snap["venue"] == "Paper (simulated fills)"
+
+
+def test_round_price_scales_decimals_to_magnitude():
+    # A flat round(p, 1) used to collapse sub-$1 prices to noise — DOGE-like
+    # 0.07894 -> 0.1, or a micro-cap like 0.005018 (1000SHIBUSD) -> 0.0 —
+    # which corrupted the trade journal's entry/exit prices for any coin
+    # trading under $1.
+    assert _round_price(79_688.456) == 79_688.5      # BTC-scale: 1 decimal
+    assert _round_price(1.2895) == 1.29               # XRP-scale: 2 decimals
+    assert _round_price(0.07894) == 0.0789            # DOGE-scale: 4 decimals
+    assert _round_price(0.005018) == 0.005018         # SHIB-scale: 6 decimals
+    assert _round_price(None) is None
+
+
+def test_trade_journal_entry_exit_keep_precision_for_cheap_coins(tmp_path):
+    s = Settings()
+    s.mode = "PAPER"
+    s.trade_log = str(tmp_path / "trades.csv")
+    agent = Agent(s)
+    trade = agent._mk_trade(
+        "1000SHIBUSD",
+        {"entry_ts": None, "side": "short", "entry": 0.005018, "size": 15, "sl": None},
+        None, 0.005070, -1.42, "manual",
+    )
+    assert trade["entry"] == 0.005018
+    assert trade["exit"] == 0.005070
+    assert trade["pnl"] == -1.42
 
 
 def test_trade_analytics_and_r_multiple(tmp_path):

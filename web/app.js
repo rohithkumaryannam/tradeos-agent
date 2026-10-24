@@ -5,6 +5,15 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (n, d = 2) => (n == null ? "—" : Number(n).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
 const signed = (n) => (n == null ? "—" : (n >= 0 ? "+" : "") + fmt(n));
+// A flat 1-decimal format works for BTC/ETH but silently rounds sub-$1 coins
+// to noise — e.g. DOGE ~0.079 -> "0.1", or a micro-cap like SHIB's ~0.005 -> "0.0".
+// Scale decimals to the price's own magnitude so every symbol stays readable.
+const fmtPrice = (n) => {
+  if (n == null) return "—";
+  const v = Math.abs(Number(n));
+  const d = v >= 100 ? 1 : v >= 1 ? 2 : v >= 0.01 ? 4 : v >= 0.0001 ? 6 : 8;
+  return fmt(n, d);
+};
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let last = null;
@@ -201,7 +210,7 @@ $("aiBtn").onclick = async () => {
           ? `${pos.side.toUpperCase()} ${pos.size}c · ${signed(pos.unrealized)}`
           : "flat";
         return `<div class="jarvis-mkrow"><div><b>${esc(sym)}</b><div class="jarvis-pos">${esc(posTxt)}</div></div>
-          <div class="jarvis-px">${fmt(mk.price, mk.price > 100 ? 1 : 4)}</div></div>`;
+          <div class="jarvis-px">${fmtPrice(mk.price)}</div></div>`;
       }).join("") || '<div class="jarvis-empty">No symbols configured.</div>';
       if (moodEl) moodEl.textContent = syms.length ? ` · ${up} UP / ${dn} DOWN` : "";
     }
@@ -644,7 +653,7 @@ function renderMarketsStrip(s) {
       : positionsKnown ? "flat" : '<span class="warn">position unknown</span>';
     return `<button type="button" aria-pressed="${sym === activeSymbol}" class="mkt${sym === activeSymbol ? " active" : ""}" data-sym="${esc(sym)}">
       <div class="sym">${esc(sym)}${pos ? ' <span class="badge ' + (pos.side === "long" ? "up" : "down") + '">' + pos.side.toUpperCase() + "</span>" : ""}</div>
-      <div class="px">${fmt(mk.price, 1)}</div>
+      <div class="px">${fmtPrice(mk.price)}</div>
       <div class="posline">${posLine}</div><div class="data-label ${mk.data_status === "fresh" ? "up" : "warn"}">${mk.data_status === "fresh" ? "● Fresh candles" : "○ Data not ready"}</div>
     </button>`;
   }).join("");
@@ -733,10 +742,10 @@ function render(s) {
     const p = mk.position;
     $("pSide").textContent = p.side.toUpperCase();
     $("pSide").className = "v " + (p.side === "long" ? "up" : "down");
-    $("pEntry").textContent = fmt(p.entry, 1);
+    $("pEntry").textContent = fmtPrice(p.entry);
     $("pSize").textContent = p.size + " contracts";
-    $("pSL").textContent = fmt(p.sl, 1);
-    $("pTP").textContent = fmt(p.tp, 1);
+    $("pSL").textContent = fmtPrice(p.sl);
+    $("pTP").textContent = fmtPrice(p.tp);
     $("pNot").textContent = "$" + fmt(p.notional);
     const u = $("pUnr"); u.textContent = "$" + signed(p.unrealized);
     u.className = "v " + ((p.unrealized || 0) >= 0 ? "up" : "down");
@@ -849,7 +858,7 @@ function renderAccount(s) {
   const pos = s.exchange_positions || [];
   html += `<div style="font-size:10.5px;letter-spacing:1px;color:var(--faint);text-transform:uppercase;margin:12px 0 6px">Exchange positions</div>`;
   html += pos.length ? pos.map(p =>
-    `<div class="row"><span class="k">${esc(p.symbol)}</span><span class="v">${esc(p.size)} @ ${fmt(p.entry, 1)}${p.unrealized != null ? ` <span class="${p.unrealized >= 0 ? "up" : "down"}">${signed(p.unrealized)}</span>` : ""}</span></div>`
+    `<div class="row"><span class="k">${esc(p.symbol)}</span><span class="v">${esc(p.size)} @ ${fmtPrice(p.entry)}${p.unrealized != null ? ` <span class="${p.unrealized >= 0 ? "up" : "down"}">${signed(p.unrealized)}</span>` : ""}</span></div>`
   ).join("") : `<div class="mut" style="padding:6px 0">Flat — no open positions on the exchange.</div>`;
   body.innerHTML = html;
 }
@@ -919,8 +928,8 @@ function renderTrades(trades) {
       <td>${esc(t.symbol || "—")}</td>
       <td title="${esc(t.strategy || "")}">${esc(strat)}</td>
       <td class="${t.side === "long" ? "up" : "down"}">${esc((t.side || "").toUpperCase())}</td>
-      <td>${fmt(t.entry, 1)}</td>
-      <td>${fmt(t.exit, 1)}</td>
+      <td>${fmtPrice(t.entry)}</td>
+      <td>${fmtPrice(t.exit)}</td>
       <td>${t.size}</td>
       <td class="${cls}">${signed(t.pnl)}</td>
       <td class="${cls}">${t.r == null ? "—" : (t.r >= 0 ? "+" : "") + t.r + "R"}</td>
@@ -1011,10 +1020,10 @@ function drawPriceChart(chart, position, trades) {
   };
   if (position) {
     const pnlTxt = position.unrealized != null ? ` ${signed(position.unrealized)}` : "";
-    hline(position.entry, "#8294b4", `${position.size} ${fmt(position.entry, 1)}${pnlTxt}`);
-    hline(position.sl, "#ff4d5e", "SL " + fmt(position.sl, 1));
-    hline(position.tp, "#19d08b", "TP " + fmt(position.tp, 1));
-    hline(position.liquidation, "#f7b733", "Liq " + fmt(position.liquidation, 1), [2, 2]);
+    hline(position.entry, "#8294b4", `${position.size} ${fmtPrice(position.entry)}${pnlTxt}`);
+    hline(position.sl, "#ff4d5e", "SL " + fmtPrice(position.sl));
+    hline(position.tp, "#19d08b", "TP " + fmtPrice(position.tp));
+    hline(position.liquidation, "#f7b733", "Liq " + fmtPrice(position.liquidation), [2, 2]);
   }
 
   // trade entry/exit markers — map each trade's timestamp to the nearest
@@ -1062,7 +1071,7 @@ function drawPriceChart(chart, position, trades) {
   const lastC = chart[chart.length - 1];
   const ly = Math.max(14, Math.min(h - 4, y(lastC.c) - 6));
   ctx.font = "11px monospace"; ctx.textAlign = "right";
-  const label = fmt(lastC.c, 1);
+  const label = fmtPrice(lastC.c);
   const tw = ctx.measureText(label).width;
   ctx.fillStyle = "#0a0e17"; ctx.fillRect(w - tw - 10, ly - 11, tw + 8, 15);
   ctx.fillStyle = "#e6edf7"; ctx.fillText(label, w - 6, ly);
