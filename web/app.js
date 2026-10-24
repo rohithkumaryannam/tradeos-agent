@@ -124,22 +124,32 @@ $("aiBtn").onclick = async () => {
 // PROPOSES an action (see /api/ai/command); nothing executes until the user
 // explicitly clicks Confirm, which calls /api/ai/execute.
 (function () {
-  const jbtn = $("jarvisBtn"), jbox = $("jarvisBox"), jheard = $("jarvisHeard"),
+  const jbtn = $("jarvisBtn"), overlay = $("jarvisOverlay"), closeBtn = $("jarvisClose"),
+        orb = $("jarvisOrb"), stateLabel = $("jarvisState"), jheard = $("jarvisHeard"),
         jreply = $("jarvisReply"), jconfirmBox = $("jarvisConfirm"),
-        jconfirmBtn = $("jarvisConfirmBtn"), jcancelBtn = $("jarvisCancelBtn");
-  if (!jbtn) return;
+        jconfirmBtn = $("jarvisConfirmBtn"), jcancelBtn = $("jarvisCancelBtn"),
+        micAgainBtn = $("jarvisMicAgain");
+  if (!jbtn || !overlay) return;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis;
   let pendingAction = null, recognizing = false, recognizer = null;
 
-  function speak(text) {
-    if (!synth || !text) return;
+  function setOrbState(state, label) {
+    orb.className = "jarvis-orb" + (state ? " " + state : "");
+    stateLabel.textContent = label;
+  }
+
+  function speak(text, onDone) {
+    if (!synth || !text) { if (onDone) onDone(); return; }
     try {
       synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.05;
+      u.onstart = () => setOrbState("speaking", "SPEAKING");
+      u.onend = () => { if (onDone) onDone(); };
+      u.onerror = () => { if (onDone) onDone(); };
       synth.speak(u);
-    } catch (e) { /* speech synthesis is a nice-to-have, never block on it */ }
+    } catch (e) { if (onDone) onDone(); }
   }
 
   function describeAction(action) {
@@ -157,12 +167,30 @@ $("aiBtn").onclick = async () => {
     }
   }
 
-  async function sendToJarvis(text) {
-    jbox.hidden = false;
-    jheard.textContent = `"${text}"`;
-    jreply.textContent = "…";
+  function openOverlay() {
+    overlay.hidden = false;
+    jheard.textContent = "";
+    jreply.textContent = "";
     jconfirmBox.hidden = true;
+    micAgainBtn.hidden = true;
     pendingAction = null;
+  }
+  function closeOverlay() {
+    overlay.hidden = true;
+    if (synth) synth.cancel();
+    if (recognizing && recognizer) recognizer.stop();
+  }
+  closeBtn.onclick = closeOverlay;
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeOverlay(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) closeOverlay(); });
+
+  async function sendToJarvis(text) {
+    jheard.textContent = `"${text}"`;
+    jreply.textContent = "";
+    jconfirmBox.hidden = true;
+    micAgainBtn.hidden = true;
+    pendingAction = null;
+    setOrbState("thinking", "THINKING…");
     try {
       const r = await fetch("/api/ai/command", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -170,14 +198,19 @@ $("aiBtn").onclick = async () => {
       });
       const d = await r.json();
       jreply.textContent = d.reply || "No response.";
-      speak(d.reply);
       if (d.action) {
         pendingAction = d.action;
         jconfirmBtn.textContent = "Confirm: " + describeAction(d.action);
-        jconfirmBox.hidden = false;
       }
+      speak(d.reply, () => {
+        setOrbState("", "READY");
+        if (pendingAction) jconfirmBox.hidden = false;
+        else micAgainBtn.hidden = false;
+      });
     } catch (e) {
       jreply.textContent = "Request failed.";
+      setOrbState("", "READY");
+      micAgainBtn.hidden = false;
     }
   }
 
@@ -187,6 +220,7 @@ $("aiBtn").onclick = async () => {
     pendingAction = null;
     jconfirmBox.hidden = true;
     jreply.textContent = "Working…";
+    setOrbState("thinking", "EXECUTING…");
     try {
       const r = await fetch("/api/ai/execute", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -196,18 +230,32 @@ $("aiBtn").onclick = async () => {
       if (!r.ok) throw new Error(d.error || "failed");
       const msg = "Done — " + describeAction(action) + ".";
       jreply.textContent = msg;
-      speak(msg);
+      speak(msg, () => { setOrbState("", "READY"); micAgainBtn.hidden = false; });
       const state = await fetch("/api/state");
       if (state.ok) { last = await state.json(); render(last); }
     } catch (e) {
       jreply.textContent = "Failed: " + (e.message || "unknown error");
-      speak("That failed.");
+      speak("That failed.", () => { setOrbState("", "READY"); micAgainBtn.hidden = false; });
     }
   };
-  jcancelBtn.onclick = () => { pendingAction = null; jconfirmBox.hidden = true; jreply.textContent += " (cancelled)"; };
+  jcancelBtn.onclick = () => {
+    pendingAction = null; jconfirmBox.hidden = true;
+    jreply.textContent += " (cancelled)"; micAgainBtn.hidden = false;
+  };
+
+  function startListening() {
+    if (!recognizer || recognizing) return;
+    recognizing = true;
+    setOrbState("listening", "LISTENING…");
+    jheard.textContent = "";
+    jreply.textContent = "";
+    jconfirmBox.hidden = true;
+    micAgainBtn.hidden = true;
+    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("", "READY"); }
+  }
+  micAgainBtn.onclick = startListening;
 
   if (!SR) {
-    jbtn.title = "Voice input isn't supported in this browser — try Chrome.";
     jbtn.onclick = () => notify("Voice input needs Chrome or Edge on this device.", true);
     return;
   }
@@ -215,22 +263,10 @@ $("aiBtn").onclick = async () => {
   recognizer.lang = "en-US";
   recognizer.interimResults = false;
   recognizer.maxAlternatives = 1;
-  recognizer.onresult = (e) => {
-    const text = e.results[0][0].transcript;
-    sendToJarvis(text);
-  };
-  recognizer.onerror = () => { recognizing = false; jbtn.classList.remove("listening"); };
-  recognizer.onend = () => { recognizing = false; jbtn.classList.remove("listening"); };
-  jbtn.onclick = () => {
-    if (recognizing) { recognizer.stop(); return; }
-    recognizing = true;
-    jbtn.classList.add("listening");
-    jbox.hidden = false;
-    jheard.textContent = "Listening…";
-    jreply.textContent = "";
-    jconfirmBox.hidden = true;
-    try { recognizer.start(); } catch (e) { recognizing = false; jbtn.classList.remove("listening"); }
-  };
+  recognizer.onresult = (e) => sendToJarvis(e.results[0][0].transcript);
+  recognizer.onerror = () => { recognizing = false; if (!overlay.hidden && !jheard.textContent) { setOrbState("", "READY"); micAgainBtn.hidden = false; } };
+  recognizer.onend = () => { recognizing = false; };
+  jbtn.onclick = () => { openOverlay(); startListening(); };
 })();
 
 document.querySelectorAll("#modeToggle button").forEach(b =>
