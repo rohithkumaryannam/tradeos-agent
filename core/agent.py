@@ -866,6 +866,23 @@ class Agent:
                     lines.append(f"{sym} [{tag}]: {pos.side} {pos.size} @ {pos.entry}")
                 else:
                     lines.append(f"{sym} [{tag}]: flat")
+            a = self._analytics()
+            if a["trades"]:
+                lines.append(
+                    f"full trade history: {a['trades']} closed trades, "
+                    f"{a['wins']} wins / {a['losses']} losses (win_rate={a['win_rate']}%), "
+                    f"total_pnl={a['total_pnl']}, avg_win={a['avg_win']}, avg_loss={a['avg_loss']}, "
+                    f"profit_factor={a['profit_factor']}, best={a['best']}, worst={a['worst']}"
+                )
+                for name, s in a["by_strategy"].items():
+                    lines.append(
+                        f"strategy {name}: {s['trades']} trades, {s['wins']}W/{s['losses']}L "
+                        f"(win_rate={s['win_rate']}%), total_pnl={s['total_pnl']}"
+                    )
+                for sym, pnl in a["by_symbol"].items():
+                    lines.append(f"symbol {sym} lifetime total_pnl={pnl}")
+            else:
+                lines.append("full trade history: no closed trades yet")
             recent = self.trades[-10:]
             net = sum(float(t.get("pnl") or 0) for t in recent if t.get("pnl") not in (None, ""))
             lines.append(f"last {len(recent)} trade events net_pnl={net:.2f}")
@@ -888,6 +905,11 @@ class Agent:
             "sentence describing exactly what you are about to do, and set the "
             "action field — never claim to have done it yet, since it has not "
             "happened until the user confirms.\n\n"
+            "The status block below already includes the FULL closed-trade "
+            "history: win/loss counts, win rate, total P&L, avg win/loss, "
+            "profit factor, and a breakdown per strategy and per symbol. "
+            "Answer win-rate, trade-count, and performance questions directly "
+            "from those numbers — never say you lack access to trade history.\n\n"
             f"Valid symbols: {symbols}\n"
             f"Valid strategy names: {strategies}\n"
             "Valid action names and their args (omit args that don't apply):\n"
