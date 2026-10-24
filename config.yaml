@@ -39,11 +39,13 @@ execution:
 #     were reinstated at the user's explicit request despite this evidence
 #     — there is no backtested edge for either, this is a known, accepted
 #     risk, not a recommendation.
-#     donchian_xrp overrides fallback_tp_mult to 4.0 (default 8.0) at the
+#     donchian_xrp overrides fallback_tp_mult to 2.0 (default 8.0) at the
 #     user's request, 2026-10-24 — they felt the default's ~8:1 fallback
-#     TP distance was too wide. The real exit is still the trailing
-#     Donchian channel cross, not this TP; this only pulls in the rarely-hit
-#     fallback bracket order. Stop-loss distance (atr_stop_mult) is unchanged.
+#     TP distance was too wide and asked for a 1:2 risk:reward specifically
+#     (matching the risk engine's own stop_loss_pct/take_profit_pct default
+#     ratio below). The real exit is still the trailing Donchian channel
+#     cross, not this TP; this only pulls in the rarely-hit fallback bracket
+#     order. Stop-loss distance (atr_stop_mult) is unchanged.
 #   - btc_bms: 5m price-action zone rejection with structure exits.
 #   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
 #     Was on 1000SHIBUSD; removed 2026-10-23 at the user's request after
@@ -64,7 +66,7 @@ strategy:
     subs:
       - { name: donchian_breakout, tag: donchian_btc, symbols: [BTCUSD] }
       - { name: mean_reversion, tag: mean_reversion, symbols: [ETHUSD] }
-      - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD], params: { fallback_tp_mult: 4.0 } }
+      - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD], params: { fallback_tp_mult: 2.0 } }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD] }
       - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
       - { name: darkknight_sol, tag: darkknight_sol, symbols: [SOLUSD] }
