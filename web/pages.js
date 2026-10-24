@@ -109,10 +109,13 @@ const descriptions={ema_crossover:'EMA 9 / 20 crossover with shared risk-sized s
 async function loadCatalog(){try{const r=await fetch('/api/strategies');if(!r.ok)throw new Error('Strategy catalog unavailable');catalog=(await r.json()).strategies;catalogError='';}catch(e){catalogError=e.message;}if(currentRoute==='/strategies'){renderCatalog();renderSubAssignments(last);}if(currentRoute==='/strategies/builder')buildStrategyEditor();}
 function paramFieldsHTML(defaults){return Object.entries(defaults||{}).filter(([k])=>!k.startsWith('_')).map(([k,v])=>`<label>${esc(k.replaceAll('_',' '))}${typeof v==='boolean'?`<select data-sub-param="${esc(k)}" data-sub-param-type="bool"><option value="true" ${v?'selected':''}>true</option><option value="false" ${!v?'selected':''}>false</option></select>`:`<input data-sub-param="${esc(k)}" data-sub-param-type="num" type="number" step="any" value="${esc(v)}">`}</label>`).join('')||'<p class="mut">No tunable parameters.</p>';}
 function renderSubAssignments(s){
- const mount=$('subAssignMount');if(!mount||!s)return;
+ const mount=$('subAssignMount');if(!mount)return;
+ if(!s){mount.innerHTML='<p class="mut">Loading…</p>';return;}
+ if(mount.dataset.rendered==='1')return;  // don't clobber in-progress edits on later ticks
  const subs=(s.strategy_params&&s.strategy_params.subs)||[];
  const names=(catalog.length?catalog.map(c=>c.name):(s.strategies||[])).filter(n=>n!=='combo');
- if(!subs.length){mount.innerHTML='<p class="mut">No per-coin strategy slots configured (not running combo).</p>';return;}
+ if(!subs.length){mount.innerHTML='<p class="mut">No per-coin strategy slots configured (not running combo).</p>';mount.dataset.rendered='1';return;}
+ mount.dataset.rendered='1';
  mount.innerHTML=subs.map(raw=>{
   const sub=typeof raw==='string'?{name:raw,tag:raw}:raw,tag=sub.tag||sub.name,symbols=sub.symbols||s.symbols||[],stratName=sub.name;
   const hasOpen=symbols.some(sym=>s.markets&&s.markets[sym]&&s.markets[sym].position);
@@ -162,6 +165,7 @@ function renderBacktest(){if(!$('backtestResult'))return;const rows=(backtestRep
 function renderRouteData(s){
  if(currentRoute==='/dashboard'||!s)return;const p=s.portfolio||{},r=s.risk||{},known=p.known!==false,markets=s.markets||{},positions=Object.entries(markets).filter(([,m])=>m.position),stats=s.analytics||{},active=markets[activeSymbol]||{};
  if($('riskPageStats')&&!$('riskPositions').value)setupRiskForm();
+ if($('subAssignMount'))renderSubAssignments(s);
  updatePageDataState();
  if($('botStats'))$('botStats').innerHTML=statTile('Trading engines','1')+statTile('Status',s.running?(s.entries_paused?'Entries paused':'Running'):'Stopped',s.running?'up':'')+statTile('Markets',(s.symbols||[]).length)+statTile('Active strategies',(s.active_strategies||[]).length);
  if($('engineTable'))$('engineTable').innerHTML=`<table class="page-table"><thead><tr><th>Bot</th><th>Status</th><th>Markets</th><th>Strategy</th><th>Timeframe</th><th>Venue</th><th>Realized today</th><th></th></tr></thead><tbody><tr><td><b>TradeOS engine</b><small>One shared account & risk budget</small></td><td><span class="state-badge ${s.running?'up':''}">${s.running?(s.entries_paused?'PAUSED ENTRIES':'RUNNING'):'STOPPED'}</span></td><td>${esc(s.symbols.join(', '))}</td><td>${esc(s.strategy)}</td><td>${esc(s.resolution)}</td><td>${esc(s.mode)}</td><td class="${s.realized_today>=0?'up':'down'}">${signed(s.realized_today)}</td><td>${linkPage('/bots/edit','Edit')}</td></tr></tbody></table>`;
