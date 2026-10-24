@@ -846,6 +846,116 @@ class Agent:
                 "trade_count": len(recent), "net_pnl": round(net, 2),
                 "by_strategy": by_strategy, "ts": self._now()}
 
+    # ── voice/chat command layer ("Jarvis") ──
+    # A fixed whitelist of real actions, each backed by the exact same
+    # internal methods the dashboard's own buttons call — the model never
+    # executes anything itself, it only ever picks a name from this list.
+    JARVIS_ACTIONS = (
+        "close_position", "set_mode", "set_auto", "pause_entries",
+        "set_strategy_risk_pct", "start_bot", "stop_bot",
+    )
+
+    def jarvis_status_summary(self) -> str:
+        with self.lock:
+            lines = [f"mode={self.s.mode} auto={self.auto} "
+                     f"entries_paused={self.entries_paused} equity={self.risk.equity:.2f}"]
+            for sym, m in self.markets.items():
+                pos = m.broker.position
+                tag = m.strategy.__class__.__module__.rsplit(".", 1)[-1]
+                if pos:
+                    lines.append(f"{sym} [{tag}]: {pos.side} {pos.size} @ {pos.entry}")
+                else:
+                    lines.append(f"{sym} [{tag}]: flat")
+            recent = self.trades[-10:]
+            net = sum(float(t.get("pnl") or 0) for t in recent if t.get("pnl") not in (None, ""))
+            lines.append(f"last {len(recent)} trade events net_pnl={net:.2f}")
+            return "\n".join(lines)
+
+    def jarvis_command(self, text: str) -> dict:
+        """Turn a natural-language instruction/question into either a direct
+        spoken answer, or a proposed action from JARVIS_ACTIONS for the
+        caller to confirm before executing (see jarvis_execute) — this
+        method NEVER mutates state itself."""
+        if not ai.available():
+            return {"reply": "AI isn't configured (set OPENROUTER_API_KEY).", "action": None}
+        symbols = list(self.markets)
+        strategies = sorted(self.s.risk.strategy_risk_pct)
+        system = (
+            "You are the voice/chat assistant embedded in TradeOS, a live crypto "
+            "trading bot dashboard. Answer questions about current status directly "
+            "and concisely (2-3 sentences, spoken-style, no markdown). If the user "
+            "asks you to CHANGE something, reply with a short confirmation-style "
+            "sentence describing exactly what you are about to do, and set the "
+            "action field — never claim to have done it yet, since it has not "
+            "happened until the user confirms.\n\n"
+            f"Valid symbols: {symbols}\n"
+            f"Valid strategy names: {strategies}\n"
+            "Valid action names and their args (omit args that don't apply):\n"
+            '  close_position {"symbol": one of the valid symbols}\n'
+            '  set_mode {"mode": "PAPER" or "DELTA_DEMO"}\n'
+            '  set_auto {"enabled": true or false}\n'
+            '  pause_entries {"paused": true or false}\n'
+            '  set_strategy_risk_pct {"strategy": one of the valid strategy names, '
+            '"risk_pct": a number between 0.05 and 5}\n'
+            '  start_bot {}\n'
+            '  stop_bot {}\n'
+            "If the request doesn't match a real action, or is missing required "
+            "info (e.g. which symbol), ask a short clarifying question instead "
+            "and set action to null.\n"
+            'Reply with JSON: {"reply": "...", "action": null or '
+            '{"name": "...", "args": {...}}}'
+        )
+        prompt = f"Current status:\n{self.jarvis_status_summary()}\n\nUser said: {text}"
+        result = ai.ask_json(prompt, system=system, max_tokens=300)
+        if not result or "reply" not in result:
+            return {"reply": "I didn't catch that clearly — can you repeat it?", "action": None}
+        action = result.get("action")
+        if isinstance(action, dict) and action.get("name") not in self.JARVIS_ACTIONS:
+            action = None
+        return {"reply": str(result["reply"])[:500], "action": action}
+
+    def jarvis_execute(self, name: str, args: dict) -> dict:
+        """Actually perform a JARVIS_ACTIONS action. Called only after the
+        user has explicitly confirmed what jarvis_command proposed."""
+        args = args or {}
+        if name == "close_position":
+            symbol = args.get("symbol")
+            if symbol not in self.markets:
+                raise ValueError(f"unknown symbol: {symbol}")
+            out = self.force_close(symbol)
+            return {"event": out.event, "detail": out.detail}
+        if name == "set_mode":
+            self.set_mode(str(args.get("mode", "")).upper())
+            return {"mode": self.s.mode}
+        if name == "set_auto":
+            self.set_auto(bool(args.get("enabled")))
+            return {"auto": self.auto}
+        if name == "pause_entries":
+            self.pause_entries(bool(args.get("paused")))
+            return {"entries_paused": self.entries_paused}
+        if name == "set_strategy_risk_pct":
+            strategy = args.get("strategy")
+            if strategy not in self.s.risk.strategy_risk_pct:
+                raise ValueError(f"unknown strategy: {strategy}")
+            risk_pct = float(args.get("risk_pct"))
+            if not (0.05 <= risk_pct <= 5):
+                raise ValueError("risk_pct must be between 0.05 and 5")
+            with self.lock:
+                merged = {
+                    "max_portfolio_risk_pct": self.s.risk.max_portfolio_risk_pct,
+                    "max_open_positions": self.s.risk.max_open_positions,
+                    "max_same_direction_positions": self.s.risk.max_same_direction_positions,
+                    "max_leverage": self.s.risk.max_leverage,
+                    "max_daily_loss_pct": self.s.risk.max_daily_loss_pct,
+                    "strategy_risk_pct": {**self.s.risk.strategy_risk_pct, strategy: risk_pct},
+                }
+            self.update_risk_controls(merged)
+            return {"strategy": strategy, "risk_pct": risk_pct}
+        if name in ("start_bot", "stop_bot"):
+            # the runner lives in server.py, not here — the route handles it
+            return {"ok": True}
+        raise ValueError(f"unknown action: {name}")
+
     # ── data ──
     def fetch_candles(self, symbol: str, resolution: str | None = None) -> list[dict]:
         """resolution defaults to the agent's own shared timeframe; a

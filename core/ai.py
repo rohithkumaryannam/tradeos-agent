@@ -41,6 +41,35 @@ def model_name() -> str:
     return os.getenv("GEMINI_MODEL", _DEFAULT_MODEL).strip()
 
 
+def ask_json(prompt: str, *, system: str = "", max_tokens: int = 400,
+             temperature: float = 0.2, timeout: int = 20) -> dict | None:
+    """Like ask(), but instructs the model to reply with a single JSON object
+    and parses it. Returns None on any failure (unavailable, bad JSON, etc.)
+    — callers must treat that as "could not understand," never as an action.
+    Strips ```json code fences some models wrap responses in."""
+    import json as _json
+    json_system = (system + "\n\n" if system else "") + (
+        "Respond with ONLY a single valid JSON object. No prose before or "
+        "after it, no markdown code fences."
+    )
+    text = ask(prompt, system=json_system, max_tokens=max_tokens,
+               temperature=temperature, timeout=timeout)
+    if not text:
+        return None
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        parsed = _json.loads(text)
+        return parsed if isinstance(parsed, dict) else None
+    except (ValueError, TypeError):
+        log.warning("ask_json: model did not return valid JSON: %r", text[:200])
+        return None
+
+
 def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
         temperature: float = 0.4, timeout: int = 20,
         thinking_budget: int | None = None) -> str | None:

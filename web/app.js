@@ -117,6 +117,122 @@ $("aiBtn").onclick = async () => {
   aiBusy = false;
   btn.disabled = !(last && last.ai_available);
 };
+
+// ── Jarvis: voice/chat command layer ──
+// Browser-side speech only (the server has no mic/speaker) — Web Speech API,
+// free and built into Chrome, no extra dependency. The LLM only ever
+// PROPOSES an action (see /api/ai/command); nothing executes until the user
+// explicitly clicks Confirm, which calls /api/ai/execute.
+(function () {
+  const jbtn = $("jarvisBtn"), jbox = $("jarvisBox"), jheard = $("jarvisHeard"),
+        jreply = $("jarvisReply"), jconfirmBox = $("jarvisConfirm"),
+        jconfirmBtn = $("jarvisConfirmBtn"), jcancelBtn = $("jarvisCancelBtn");
+  if (!jbtn) return;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const synth = window.speechSynthesis;
+  let pendingAction = null, recognizing = false, recognizer = null;
+
+  function speak(text) {
+    if (!synth || !text) return;
+    try {
+      synth.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.rate = 1.05;
+      synth.speak(u);
+    } catch (e) { /* speech synthesis is a nice-to-have, never block on it */ }
+  }
+
+  function describeAction(action) {
+    if (!action) return "";
+    const a = action.args || {};
+    switch (action.name) {
+      case "close_position": return `Close the ${esc(a.symbol)} position`;
+      case "set_mode": return `Switch mode to ${esc(a.mode)}`;
+      case "set_auto": return a.enabled ? "Turn auto-trading ON" : "Turn auto-trading OFF";
+      case "pause_entries": return a.paused ? "Pause new entries" : "Resume new entries";
+      case "set_strategy_risk_pct": return `Set ${esc(a.strategy)}'s risk per trade to ${esc(a.risk_pct)}%`;
+      case "start_bot": return "Start the bot";
+      case "stop_bot": return "Stop the bot";
+      default: return action.name;
+    }
+  }
+
+  async function sendToJarvis(text) {
+    jbox.hidden = false;
+    jheard.textContent = `"${text}"`;
+    jreply.textContent = "…";
+    jconfirmBox.hidden = true;
+    pendingAction = null;
+    try {
+      const r = await fetch("/api/ai/command", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const d = await r.json();
+      jreply.textContent = d.reply || "No response.";
+      speak(d.reply);
+      if (d.action) {
+        pendingAction = d.action;
+        jconfirmBtn.textContent = "Confirm: " + describeAction(d.action);
+        jconfirmBox.hidden = false;
+      }
+    } catch (e) {
+      jreply.textContent = "Request failed.";
+    }
+  }
+
+  jconfirmBtn.onclick = async () => {
+    if (!pendingAction) return;
+    const action = pendingAction;
+    pendingAction = null;
+    jconfirmBox.hidden = true;
+    jreply.textContent = "Working…";
+    try {
+      const r = await fetch("/api/ai/execute", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "failed");
+      const msg = "Done — " + describeAction(action) + ".";
+      jreply.textContent = msg;
+      speak(msg);
+      const state = await fetch("/api/state");
+      if (state.ok) { last = await state.json(); render(last); }
+    } catch (e) {
+      jreply.textContent = "Failed: " + (e.message || "unknown error");
+      speak("That failed.");
+    }
+  };
+  jcancelBtn.onclick = () => { pendingAction = null; jconfirmBox.hidden = true; jreply.textContent += " (cancelled)"; };
+
+  if (!SR) {
+    jbtn.title = "Voice input isn't supported in this browser — try Chrome.";
+    jbtn.onclick = () => notify("Voice input needs Chrome or Edge on this device.", true);
+    return;
+  }
+  recognizer = new SR();
+  recognizer.lang = "en-US";
+  recognizer.interimResults = false;
+  recognizer.maxAlternatives = 1;
+  recognizer.onresult = (e) => {
+    const text = e.results[0][0].transcript;
+    sendToJarvis(text);
+  };
+  recognizer.onerror = () => { recognizing = false; jbtn.classList.remove("listening"); };
+  recognizer.onend = () => { recognizing = false; jbtn.classList.remove("listening"); };
+  jbtn.onclick = () => {
+    if (recognizing) { recognizer.stop(); return; }
+    recognizing = true;
+    jbtn.classList.add("listening");
+    jbox.hidden = false;
+    jheard.textContent = "Listening…";
+    jreply.textContent = "";
+    jconfirmBox.hidden = true;
+    try { recognizer.start(); } catch (e) { recognizing = false; jbtn.classList.remove("listening"); }
+  };
+})();
+
 document.querySelectorAll("#modeToggle button").forEach(b =>
   b.onclick = () => post("/api/mode/" + b.dataset.mode));
 document.querySelectorAll("#autoToggle button").forEach(b =>

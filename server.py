@@ -464,6 +464,49 @@ def ai_analysis(symbol: Optional[str] = None):
     return agent.ai_analysis(symbol)
 
 
+@app.post("/api/ai/command")
+async def ai_command(request: Request):
+    """Voice/chat entry point ('Jarvis'): turns natural language into either
+    a direct spoken answer, or a proposed action the dashboard must show the
+    user and get an explicit confirm on before calling /api/ai/execute.
+    This endpoint itself never changes anything."""
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        body = {}
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "empty text"}, status_code=400)
+    return agent.jarvis_command(text)
+
+
+@app.post("/api/ai/execute")
+async def ai_execute(request: Request):
+    """Perform one JARVIS_ACTIONS action. Only ever called after the user
+    has confirmed the exact action jarvis_command proposed — never invoked
+    directly from a raw transcript."""
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        body = {}
+    name = body.get("name")
+    args = body.get("args") or {}
+    if name not in agent.JARVIS_ACTIONS:
+        return JSONResponse({"error": "unknown action"}, status_code=400)
+    try:
+        if name == "start_bot":
+            runner.start()
+            result = {"running": True}
+        elif name == "stop_bot":
+            runner.stop()
+            result = {"running": False}
+        else:
+            result = agent.jarvis_execute(name, args)
+        return {"result": result}
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:300]}, status_code=400)
+
+
 @app.get("/api/research")
 def strategy_research():
     path = ROOT / "data" / "strategy_comparison.json"

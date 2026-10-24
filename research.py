@@ -22,7 +22,8 @@ from run import ReplayClient
 
 ROOT = Path(__file__).resolve().parent
 CANDIDATES = ("ema_crossover", "donchian_breakout", "btc_trend_pullback",
-              "mean_reversion", "btc_bms", "time_series_momentum", "darkknight_sol")
+              "mean_reversion", "btc_bms", "time_series_momentum", "darkknight_sol",
+              "supertrend", "bb_squeeze_breakout", "mean_reversion_scalp")
 PUBLIC_API = "https://api.india.delta.exchange"
 
 
@@ -67,9 +68,17 @@ def compare_dataset(payload, fee_bps=5, slippage_bps=2, candidates=CANDIDATES):
     with tempfile.TemporaryDirectory(prefix="tradeos-research-") as directory:
         for strategy in candidates:
             for sample, warmup in (("full", 250), ("holdout", split - 1)):
+                # Strategies with a configurable `resolution` constructor
+                # param (ema_crossover, supertrend, bb_squeeze_breakout)
+                # default to their own fixed timeframe otherwise, silently
+                # mismatching the dataset actually being replayed.
+                strategy_params = ({"resolution": payload["resolution"]}
+                                    if strategy in ("ema_crossover", "supertrend", "bb_squeeze_breakout", "mean_reversion_scalp")
+                                    else {})
                 settings = Settings(
                     mode="PAPER", symbols=[payload["symbol"]], resolution=payload["resolution"],
-                    lookback=300, strategy_name=strategy, ai_narrate=False,
+                    lookback=300, strategy_name=strategy, strategy_params=strategy_params,
+                    ai_narrate=False,
                     risk=RiskConfig(account_equity=10_000, risk_per_trade_pct=.5, max_leverage=2),
                     trade_log=str(Path(directory) / f"{strategy}-{sample}.csv"),
                 )
