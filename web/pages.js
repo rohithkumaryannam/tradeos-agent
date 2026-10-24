@@ -70,7 +70,7 @@ function showPage(path){
   body.innerHTML='<div class="page-toolbar"><div class="tab-bar"><button class="selected" id="allMarkets">All markets</button><button id="favoriteMarkets">Favorites</button></div><input id="marketSearch" type="search" placeholder="Search markets…" aria-label="Search markets"></div>'+panel('Configured markets','<div class="table-scroll"><table class="page-table"><thead><tr><th></th><th>Symbol</th><th>Price</th><th>Window change</th><th>Trend</th><th>Data state</th><th></th></tr></thead><tbody id="marketRows"></tbody></table></div>')+'<div class="page-two-columns">'+panel('Market details','<div id="marketDetail"></div><canvas id="marketDetailChart" height="220"></canvas>')+panel('Strategy decision','<div id="marketDecision"></div>')+'</div>';
   $('marketSearch').value=marketQuery;$('marketSearch').oninput=e=>{marketQuery=e.target.value;renderRouteData(last);};$('allMarkets').onclick=()=>{marketFavoritesOnly=false;renderRouteData(last);};$('favoriteMarkets').onclick=()=>{marketFavoritesOnly=true;renderRouteData(last);};
  }else if(path==='/strategies'){
-  $('pageActions').innerHTML=linkPage('/strategies/builder','+ Strategy draft','primary');body.innerHTML='<div id="libraryCards" class="library-grid"></div>'+panel('Strategy performance','<div id="libraryPerformance"></div>');moveComponent($('stratPerf'),$('libraryPerformance'));renderCatalog();
+  $('pageActions').innerHTML=linkPage('/strategies/builder','+ Strategy draft','primary');body.innerHTML='<div id="libraryCards" class="library-grid"></div>'+panel('Assign strategies per coin','<p class="mut">Pick which strategy runs each coin, tune its parameters, and set its risk per trade — changes apply to the live engine immediately, no redeploy needed.</p><div id="subAssignMount" class="sub-assign-grid"></div>')+panel('Strategy performance','<div id="libraryPerformance"></div>');moveComponent($('stratPerf'),$('libraryPerformance'));renderCatalog();renderSubAssignments(last);
  }else if(path==='/strategies/builder'){
   $('pageActions').innerHTML=linkPage('/strategies','← Strategy library');
   body.innerHTML='<div class="capability-note">Draft editor for existing strategy parameters. Custom rules are not deployed by this application.</div><div class="tab-bar editor-tabs"><button class="selected" data-builder-tab="setup">Setup</button><button data-builder-tab="parameters">Parameters</button><button data-builder-tab="rules">Entry & exit rules</button><button data-builder-tab="risk">Risk</button></div><div class="page-two-columns">'+panel('Strategy configuration','<form id="strategyDraftForm" class="editor-form"><label>Name<input id="strategyDraftName" required maxlength="80" placeholder="Strategy name"></label><label>Implemented strategy<select id="strategyPreset"></select></label><label>Description<textarea id="strategyDraftDescription" rows="3" placeholder="Describe this draft…"></textarea></label><div id="builderParameters" class="form-columns"></div><div id="builderRules"></div><div id="builderRisk"></div><div class="control-actions"><button class="primary" type="submit">Save draft</button><button type="button" id="exportStrategyDraft">Export JSON</button></div><p id="strategySaveState" role="status"></p></form>')+panel('Live market preview','<div id="builderMarketLabel"></div><canvas id="builderPreview" height="240"></canvas><p>Current market prices provide context; this is not a backtest of the draft.</p>')+'</div>';
@@ -106,7 +106,47 @@ function showPage(path){
  if(last)render(last);renderRouteData(last);window.scrollTo(0,0);
 }
 const descriptions={ema_crossover:'EMA 9 / 20 crossover with shared risk-sized stop and target protection.',donchian_breakout:'Donchian channel breakout with volume and ADX confirmation.',btc_trend_pullback:'EMA trend-stack pullback with confirmation, structure stop, and fixed-R target.',btc_bms:'Price-action zone rejection with a structure-break exit.',mean_reversion:'Low-ADX Bollinger-band extremes confirmed by RSI, with an ATR stop, middle-band target, and time-stop.',time_series_momentum:'Multi-horizon momentum with EMA confirmation and ATR brackets.',combo:'Runs every configured sub-strategy. Live Delta stays netted per symbol; independent paper lanes let every strategy trade concurrently on real candles.'};
-async function loadCatalog(){try{const r=await fetch('/api/strategies');if(!r.ok)throw new Error('Strategy catalog unavailable');catalog=(await r.json()).strategies;catalogError='';}catch(e){catalogError=e.message;}if(currentRoute==='/strategies')renderCatalog();if(currentRoute==='/strategies/builder')buildStrategyEditor();}
+async function loadCatalog(){try{const r=await fetch('/api/strategies');if(!r.ok)throw new Error('Strategy catalog unavailable');catalog=(await r.json()).strategies;catalogError='';}catch(e){catalogError=e.message;}if(currentRoute==='/strategies'){renderCatalog();renderSubAssignments(last);}if(currentRoute==='/strategies/builder')buildStrategyEditor();}
+function paramFieldsHTML(defaults){return Object.entries(defaults||{}).filter(([k])=>!k.startsWith('_')).map(([k,v])=>`<label>${esc(k.replaceAll('_',' '))}${typeof v==='boolean'?`<select data-sub-param="${esc(k)}" data-sub-param-type="bool"><option value="true" ${v?'selected':''}>true</option><option value="false" ${!v?'selected':''}>false</option></select>`:`<input data-sub-param="${esc(k)}" data-sub-param-type="num" type="number" step="any" value="${esc(v)}">`}</label>`).join('')||'<p class="mut">No tunable parameters.</p>';}
+function renderSubAssignments(s){
+ const mount=$('subAssignMount');if(!mount||!s)return;
+ const subs=(s.strategy_params&&s.strategy_params.subs)||[];
+ const names=(catalog.length?catalog.map(c=>c.name):(s.strategies||[])).filter(n=>n!=='combo');
+ if(!subs.length){mount.innerHTML='<p class="mut">No per-coin strategy slots configured (not running combo).</p>';return;}
+ mount.innerHTML=subs.map(raw=>{
+  const sub=typeof raw==='string'?{name:raw,tag:raw}:raw,tag=sub.tag||sub.name,symbols=sub.symbols||s.symbols||[],stratName=sub.name;
+  const hasOpen=symbols.some(sym=>s.markets&&s.markets[sym]&&s.markets[sym].position);
+  const riskPct=s.risk&&s.risk.strategy_risk_pct&&s.risk.strategy_risk_pct[tag];
+  const defaults=(catalog.find(c=>c.name===stratName)||{}).params||{};
+  const merged={...defaults,...(sub.params||{})};
+  return `<div class="panel sub-assign-card" data-sub-tag="${esc(tag)}" data-sub-original="${esc(stratName)}">
+   <header><b>${esc(symbols.join(', ')||tag)}</b><span class="mut mono">${esc(tag)}</span></header>
+   <label>Strategy<select data-sub-strategy ${hasOpen?'disabled':''}>${names.map(n=>`<option value="${esc(n)}" ${n===stratName?'selected':''}>${esc(STRAT_SHORT[n]||n)}</option>`).join('')}</select></label>
+   ${hasOpen?'<p class="mut warn">Close the open position to change the strategy here. Parameters and risk % can still be changed.</p>':''}
+   <div class="form-columns sub-params">${paramFieldsHTML(merged)}</div>
+   <label>Risk per trade %<input data-sub-risk type="number" min="0.05" max="5" step="0.01" value="${riskPct==null?'':riskPct}"></label>
+   <div class="control-actions"><button class="primary" data-sub-save>Save</button><span class="mut sub-save-state"></span></div>
+  </div>`;
+ }).join('');
+ mount.querySelectorAll('[data-sub-tag]').forEach(card=>{
+  const tag=card.dataset.subTag,select=card.querySelector('[data-sub-strategy]');
+  select.onchange=()=>{const defaults=(catalog.find(c=>c.name===select.value)||{}).params||{};card.querySelector('.sub-params').innerHTML=paramFieldsHTML(defaults);};
+  card.querySelector('[data-sub-save]').onclick=async()=>{
+   const stateEl=card.querySelector('.sub-save-state');stateEl.textContent='Saving…';
+   const body={name:select.value,params:{}};
+   card.querySelectorAll('[data-sub-param]').forEach(inp=>{body.params[inp.dataset.subParam]=inp.dataset.subParamType==='bool'?inp.value==='true':Number(inp.value);});
+   const riskInput=card.querySelector('[data-sub-risk]');
+   if(riskInput.value!=='')body.risk_pct=Number(riskInput.value);
+   try{
+    const r=await fetch('/api/strategy/sub/'+encodeURIComponent(tag),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.error||'Save failed');
+    stateEl.textContent='Saved.';notify(tag+' updated.');
+    const st=await fetch('/api/state');if(st.ok){last=await st.json();render(last);}
+   }catch(e){stateEl.textContent='';notify(e.message,true);}
+  };
+ });
+}
 function renderCatalog(){if(!$('libraryCards'))return;const list=catalog.length?catalog:(last?.strategies||[]).map(name=>({name}));$('libraryCards').innerHTML=(catalogError?`<div class="capability-note warn">${esc(catalogError)}. Defaults unavailable; showing installed strategy names.</div>`:'')+list.map(({name,params,resolutions})=>`<article class="panel library-card"><header><span class="strategy-glyph">${icon('nodes')}</span><span class="state-badge ${(last?.active_strategies||[]).includes(name)||last?.strategy===name?'up':''}">${(last?.active_strategies||[]).includes(name)||last?.strategy===name?'ACTIVE':'AVAILABLE'}</span></header><h2>${esc(STRAT_SHORT[name]||name)}</h2><p>${esc(descriptions[name]||'Installed strategy')}</p><dl><div><dt>Supported timeframe</dt><dd>${resolutions?esc(resolutions.join(' / ')):'Configured timeframe'}</dd></div><div><dt>Risk per trade</dt><dd>${fmt(last?.risk?.strategy_risk_pct?.[name]??last?.risk?.risk_per_trade_pct)}%</dd></div></dl><div class="control-actions"><button data-draft-strategy="${esc(name)}">Configure draft</button><button data-select-strategy="${esc(name)}">Activate</button></div></article>`).join('');$('libraryCards').querySelectorAll('[data-draft-strategy]').forEach(b=>b.onclick=()=>{saveLocal('tradeos.strategyPreset',b.dataset.draftStrategy);navigate('/strategies/builder');});$('libraryCards').querySelectorAll('[data-select-strategy]').forEach(b=>{b.disabled=last?.strategy===b.dataset.selectStrategy||Object.values(last?.markets||{}).some(m=>m.position)||last?.mode==='DELTA_DEMO'&&last?.account_status!=='live';b.title=b.disabled?'Current strategy, or strategy changes are locked while positions exist':'Use the existing strategy switch API';b.onclick=()=>post('/api/strategy/'+encodeURIComponent(b.dataset.selectStrategy));});}
 function renderBotDrafts(){const draft=savedLocal('tradeos.botDraft',null);$('botDraftList').innerHTML=draft?`<div class="draft-card"><span class="state-badge">LOCAL DRAFT</span><h3>${esc(draft.name)}</h3><p>${esc(draft.strategy)} · ${esc(draft.resolution)} · ${esc(draft.mode)}</p>${linkPage('/bots/edit','Edit draft')}<button id="exportBotDraft">Export JSON</button></div>`:'<div class="page-empty">No configuration drafts saved.</div>';if($('exportBotDraft'))$('exportBotDraft').onclick=()=>downloadJSON(draft,'tradeos-bot-draft.json');}
 function buildStrategyEditor(){if(!$('strategyPreset'))return;const draft=savedLocal('tradeos.strategyDraft',{}),wanted=savedLocal('tradeos.strategyPreset',draft.strategy||'ema_crossover');$('strategyPreset').innerHTML=(catalog.length?catalog:(last?.strategies||[]).map(name=>({name}))).map(({name})=>`<option value="${name}">${esc(STRAT_SHORT[name]||name)}</option>`).join('');$('strategyPreset').value=wanted;$('strategyDraftName').value=draft.name||'';$('strategyDraftDescription').value=draft.description||'';

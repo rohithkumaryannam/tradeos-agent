@@ -369,6 +369,98 @@ class Agent:
             self._feed("risk", "risk controls updated from dashboard")
         return new_config
 
+    # ── per-coin strategy assignment (combo `subs`) ──
+    def update_sub(self, tag: str, *, name: str | None = None,
+                    params: dict | None = None, risk_pct: float | None = None) -> dict:
+        """Change which strategy a combo slot (identified by its stable `tag`,
+        e.g. "donchian_xrp") runs, and/or its params and per-trade risk cap —
+        the self-service version of what used to require a config.yaml edit
+        and a redeploy. Changing the strategy class itself is blocked while
+        its symbol(s) have an open position (same guard as set_strategy);
+        params and risk_pct only affect future entries, so they're always
+        safe to change live."""
+        with self.lock:
+            subs = list(self.s.strategy_params.get("subs") or [])
+            idx = next((i for i, s in enumerate(subs)
+                        if (s.get("tag") if isinstance(s, dict) else s) == tag), None)
+            if idx is None:
+                raise ValueError(f"unknown strategy slot: {tag}")
+            sub = dict(subs[idx]) if isinstance(subs[idx], dict) else {"name": subs[idx]}
+            sub.setdefault("tag", tag)
+            affected = sub.get("symbols") or list(self.markets)
+            unknown = [sym for sym in affected if sym not in self.markets]
+            if unknown:
+                raise ValueError(f"unknown symbol(s): {unknown}")
+
+            if name is not None and name != sub.get("name"):
+                if name == "combo" or name not in available_strategies():
+                    raise ValueError(f"unknown strategy: {name}")
+                if any(self.markets[sym].broker.position for sym in affected):
+                    raise ValueError("close the open position before changing this slot's strategy")
+                sub["name"] = name
+                sub["params"] = {}  # old strategy's params don't apply to the new one
+
+            if params is not None:
+                try:
+                    defaults = load_strategy(sub["name"], {}).params
+                except Exception as e:
+                    raise ValueError(f"cannot load strategy {sub['name']}: {e}")
+                bad = set(params) - set(defaults)
+                if bad:
+                    raise ValueError(f"unknown params for {sub['name']}: {sorted(bad)}")
+                cleaned = {}
+                for key, raw in params.items():
+                    default = defaults[key]
+                    if isinstance(default, bool):
+                        cleaned[key] = raw if isinstance(raw, bool) else \
+                            str(raw).strip().lower() in ("1", "true", "yes", "on")
+                    elif isinstance(default, (int, float)):
+                        try:
+                            num = float(raw)
+                        except (TypeError, ValueError):
+                            raise ValueError(f"invalid value for {key}")
+                        if not math.isfinite(num):
+                            raise ValueError(f"invalid value for {key}")
+                        cleaned[key] = int(num) if isinstance(default, int) else num
+                    else:
+                        cleaned[key] = raw
+                sub["params"] = {**sub.get("params", {}), **cleaned}
+
+            subs[idx] = sub
+            self.s.strategy_params = {**self.s.strategy_params, "subs": subs}
+            for m in self.markets.values():
+                self._build_strategy(m)
+            self._align_strategy_data()
+
+            if risk_pct is not None:
+                try:
+                    pct = float(risk_pct)
+                except (TypeError, ValueError):
+                    raise ValueError("risk_pct must be a number")
+                if not math.isfinite(pct) or pct < 0.05 or pct > 5:
+                    raise ValueError("risk_pct must be between 0.05% and 5%")
+                caps = {**self.s.risk.strategy_risk_pct, tag: pct}
+                new_config = replace(self.s.risk, strategy_risk_pct=caps,
+                                      risk_per_trade_pct=max(caps.values()))
+                self.s.risk = new_config
+                self.risk.cfg = new_config
+                self.shadow_risk.cfg = new_config
+                for lane in self.strategy_lanes.values():
+                    lane.risk.cfg = new_config
+
+            self._feed("strategy", f"{tag} -> {sub['name']} {sub.get('params') or ''}".strip())
+            return sub
+
+    def apply_strategy_subs(self, subs: list):
+        """Boot-time restore of a previously saved update_sub() result — the
+        list was already validated when it was saved, so just swap it in and
+        rebuild every market's strategy instance."""
+        with self.lock:
+            self.s.strategy_params = {**self.s.strategy_params, "subs": subs}
+            for m in self.markets.values():
+                self._build_strategy(m)
+            self._align_strategy_data()
+
     _BAL_TTL = 20  # seconds between live account polls
     _ACCOUNT_MAX_BACKOFF = 300
 

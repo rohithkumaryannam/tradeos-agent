@@ -41,7 +41,7 @@ log = logging.getLogger("tradeos.server")
 ROOT = Path(__file__).resolve().parent
 settings = Settings.load()
 agent = Agent(settings)
-CONFIG_REVISION = 15
+CONFIG_REVISION = 16
 CONFIG_RISK = {
     key: getattr(settings.risk, key) for key in (
         "max_portfolio_risk_pct", "max_open_positions",
@@ -233,12 +233,14 @@ def _resume_from_state():
         if int(st.get("config_revision", 0)) < CONFIG_REVISION:
             # One-time migration: discard the silent legacy risk/strategy
             # overrides that caused config.yaml to stop reflecting reality.
-            state.delete("risk", "strategy", "resolution")
+            state.delete("risk", "strategy", "resolution", "strategy_subs")
             st = state.load()
         if st.get("risk"):
             agent.update_risk_controls(st["risk"])
         if st.get("strategy"):
             agent.set_strategy(st["strategy"])
+        if st.get("strategy_subs"):
+            agent.apply_strategy_subs(st["strategy_subs"])
         if st.get("resolution") in _RES_SECONDS:
             agent.s.resolution = st["resolution"]
         agent._align_strategy_data()
@@ -387,6 +389,31 @@ def set_strategy(name: str):
                    config_revision=CONFIG_REVISION)
         return {"strategy": name, "resolution": agent.s.resolution}
     except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/strategy/sub/{tag}")
+async def update_strategy_sub(tag: str, request: Request):
+    """Self-service per-coin strategy/params/risk editing (combo `subs`),
+    so changing what runs on a symbol doesn't require a config.yaml edit
+    and a redeploy."""
+    try:
+        body = await request.json()
+        sub = agent.update_sub(tag, name=body.get("name"), params=body.get("params"),
+                                risk_pct=body.get("risk_pct"))
+        save_kwargs = {"strategy_subs": agent.s.strategy_params.get("subs"),
+                       "config_revision": CONFIG_REVISION}
+        if body.get("risk_pct") is not None:
+            save_kwargs["risk"] = {
+                key: getattr(agent.s.risk, key) for key in (
+                    "max_portfolio_risk_pct", "max_open_positions",
+                    "max_same_direction_positions", "max_leverage",
+                    "max_daily_loss_pct", "strategy_risk_pct",
+                )
+            }
+        state.save(**save_kwargs)
+        return {"sub": sub, "strategy_risk_pct": agent.s.risk.strategy_risk_pct}
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
