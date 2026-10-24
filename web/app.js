@@ -125,26 +125,40 @@ $("aiBtn").onclick = async () => {
 // explicitly clicks Confirm, which calls /api/ai/execute.
 (function () {
   const jbtn = $("jarvisBtn"), overlay = $("jarvisOverlay"), closeBtn = $("jarvisClose"),
-        stateLabel = $("jarvisState"), coreNote = $("jarvisCoreNote"), chat = $("jarvisChat"),
-        jconfirmBox = $("jarvisConfirm"), jconfirmBtn = $("jarvisConfirmBtn"),
+        stateLabel = $("jarvisState"), coreNote = $("jarvisCoreNote"), heardEl = $("jarvisHeard"),
+        chat = $("jarvisChat"), jconfirmBox = $("jarvisConfirm"), jconfirmBtn = $("jarvisConfirmBtn"),
         jcancelBtn = $("jarvisCancelBtn"), micAgainBtn = $("jarvisMicAgain"),
-        bg = $("jarvisBg"), timeEl = $("jarvisTime"), linkEl = $("jarvisLink");
+        bg = $("jarvisBg"), wave = $("jarvisWave"), timeEl = $("jarvisTime"), dateEl = $("jarvisDate"),
+        linkEl = $("jarvisLink"), modeEl = $("jarvisMode"), stlEl = $("jarvisStl"), micvEl = $("jarvisMicv"),
+        marketBox = $("jarvisMarket"), eventsBox = $("jarvisEvents"), vitBox = $("jarvisVit"), moodEl = $("jarvisMood");
   if (!jbtn || !overlay) return;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis;
-  let pendingAction = null, recognizing = false, recognizer = null;
+  let pendingAction = null, recognizing = false, recognizer = null, curState = "idle";
 
-  function setOrbState(state, label) {
-    overlay.style.setProperty("--jh",
-      state === "listening" ? "330" : state === "thinking" ? "45" : state === "speaking" ? "150" : "190");
-    stateLabel.textContent = label;
-    coreNote.textContent = state === "listening" ? "AWAITING VOICE INPUT"
-      : state === "thinking" ? "PROCESSING REQUEST"
-      : state === "speaking" ? "TRANSMITTING RESPONSE"
-      : "SYSTEM OPERATIONAL";
+  const HUE = { idle: 195, listening: 185, thinking: 280, speaking: 145, executing: 45 };
+  const LABEL = { idle: "IDLE", listening: "LISTENING", thinking: "PROCESSING QUERY",
+                  speaking: "JARVIS RESPONDING", executing: "EXECUTING" };
+  const NOTE = { idle: "SYSTEM OPERATIONAL", listening: "AWAITING VOICE INPUT",
+                 thinking: "REASONING OVER REQUEST", speaking: "TRANSMITTING RESPONSE",
+                 executing: "APPLYING CHANGE" };
+  const NODES = { listening: ["mic", "ear"], thinking: ["mind"], executing: ["hands"], speaking: ["voice"] };
+
+  function setOrbState(state) {
+    curState = state || "idle";
+    overlay.style.setProperty("--jh", HUE[curState]);
+    stateLabel.textContent = LABEL[curState];
+    coreNote.textContent = NOTE[curState];
+    if (stlEl) stlEl.textContent = LABEL[curState];
+    if (micvEl) micvEl.textContent = curState === "listening" ? "MIC ACTIVE" : "STREAM IDLE";
     if (linkEl) {
-      linkEl.textContent = state ? "ACTIVE" : "STANDBY";
-      linkEl.className = state ? "live" : "";
+      linkEl.textContent = curState === "idle" ? "● VOICE LINK STANDBY" : "● VOICE LINK ACTIVE";
+      linkEl.className = curState === "idle" ? "standby" : "live";
+    }
+    const on = NODES[curState] || [];
+    for (const id of ["mic", "ear", "mind", "hands", "voice"]) {
+      const n = $("jn-" + id);
+      if (n) n.classList.toggle("on", on.includes(id));
     }
   }
 
@@ -164,74 +178,270 @@ $("aiBtn").onclick = async () => {
       synth.cancel();
       const u = new SpeechSynthesisUtterance(text);
       u.rate = 1.05;
-      u.onstart = () => setOrbState("speaking", "SPEAKING");
+      u.onstart = () => setOrbState("speaking");
       u.onend = () => { if (onDone) onDone(); };
       u.onerror = () => { if (onDone) onDone(); };
       synth.speak(u);
     } catch (e) { if (onDone) onDone(); }
   }
 
-  // ── Canvas HUD background: pulsing reactor core + rotating wireframe globe ──
+  // ── Live TradeOS side panels (market / events / vitals) ──
+  function renderPanels(s) {
+    if (!s || overlay.hidden) return;
+    if (modeEl) modeEl.textContent = (s.mode || "—") + (s.auto ? " · AUTO" : " · MANUAL");
+
+    if (marketBox) {
+      const syms = s.symbols || [];
+      let up = 0, dn = 0;
+      marketBox.innerHTML = syms.map(sym => {
+        const mk = (s.markets && s.markets[sym]) || {};
+        const pos = mk.position;
+        if (pos) (pos.unrealized >= 0 ? up++ : dn++);
+        const posTxt = pos
+          ? `${pos.side.toUpperCase()} ${pos.size}c · ${signed(pos.unrealized)}`
+          : "flat";
+        return `<div class="jarvis-mkrow"><div><b>${esc(sym)}</b><div class="jarvis-pos">${esc(posTxt)}</div></div>
+          <div class="jarvis-px">${fmt(mk.price, mk.price > 100 ? 1 : 4)}</div></div>`;
+      }).join("") || '<div class="jarvis-empty">No symbols configured.</div>';
+      if (moodEl) moodEl.textContent = syms.length ? ` · ${up} UP / ${dn} DOWN` : "";
+    }
+
+    if (eventsBox) {
+      const feed = (s.feed || []).slice(0, 10);
+      eventsBox.innerHTML = feed.map(ev => {
+        const t = ev.t ? new Date(ev.t).toLocaleTimeString("en-US", { hour12: false }) : "";
+        return `<div class="jarvis-evrow"><span class="jarvis-ev-t">${esc(t)}</span>${esc(ev.event || "")} — ${esc(ev.detail || "")}</div>`;
+      }).join("") || '<div class="jarvis-empty">No recent events.</div>';
+    }
+
+    if (vitBox) {
+      const rows = [
+        ["EQUITY", s.equity != null ? fmt(s.equity) : "—"],
+        ["MODE", s.mode || "—"],
+        ["AUTO", s.auto ? "ON" : "OFF"],
+        ["ENTRIES", s.entries_paused ? "PAUSED" : "ACTIVE"],
+        ["RUNNING", s.running ? "YES" : "NO"],
+        ["AI", s.ai_available ? "AVAILABLE" : "OFFLINE"],
+      ];
+      vitBox.innerHTML = rows.map(([k, v]) => `<b>${k}</b><span>${esc(v)}</span>`).join("");
+    }
+  }
+  let panelTimer = null;
+  function startPanels() { renderPanels(last); panelTimer = setInterval(() => renderPanels(last), 1000); }
+  function stopPanels() { if (panelTimer) clearInterval(panelTimer); panelTimer = null; }
+
+  // ── Canvas HUD: reactor core, wireframe globe, horizon grid, particles ──
+  const PARTS = Array.from({ length: 70 }, () => ({
+    x: Math.random(), y: Math.random(), v: 10 + Math.random() * 26,
+    r: 0.6 + Math.random() * 1.5, a: 0.2 + Math.random() * 0.5,
+  }));
+  const ORBITS = Array.from({ length: 10 }, (_, i) => ({
+    speed: 0.8 + Math.random() * 0.6, dist: 0.85 + Math.random() * 0.35,
+    phase: (i / 10) * Math.PI * 2, size: 2 + Math.random() * 2.2,
+  }));
+  const GLOBE_LINES = [];
+  for (const lat of [-60, -30, 0, 30, 60]) {
+    const pts = [], la = lat * Math.PI / 180;
+    for (let j = 0; j <= 52; j++) {
+      const a = j / 52 * Math.PI * 2;
+      pts.push([Math.cos(la) * Math.cos(a), Math.sin(la), Math.cos(la) * Math.sin(a)]);
+    }
+    GLOBE_LINES.push(pts);
+  }
+  for (let k = 0; k < 10; k++) {
+    const lon = k / 10 * Math.PI, pts = [];
+    for (let j = 0; j <= 52; j++) {
+      const b = j / 52 * Math.PI * 2;
+      pts.push([Math.cos(b) * Math.cos(lon), Math.sin(b), Math.cos(b) * Math.sin(lon)]);
+    }
+    GLOBE_LINES.push(pts);
+  }
+
   let animRunning = false, animFrame = null;
   function startBgAnim() {
     if (!bg || animRunning) return;
     animRunning = true;
     const ctx = bg.getContext("2d");
-    let t = 0;
-    function resize() { bg.width = overlay.clientWidth; bg.height = overlay.clientHeight; }
+    const wctx = wave ? wave.getContext("2d") : null;
+    let W = 0, H = 0, CX = 0, CY = 0, R = 200, T = 0, amp = 0.07, last_ts = 0;
+    function col(l, a, hue) { return `hsla(${hue},100%,${l}%,${a})`; }
+    function resize() {
+      W = overlay.clientWidth; H = overlay.clientHeight;
+      bg.width = W; bg.height = H;
+      R = Math.min(W * 0.17, H * 0.3);
+      CX = W / 2; CY = H / 2;
+      if (wave) { wave.width = wave.clientWidth; wave.height = wave.clientHeight; }
+    }
     resize();
     window.addEventListener("resize", resize);
-    function hue() { return getComputedStyle(overlay).getPropertyValue("--jh").trim() || "190"; }
-    function frame() {
-      if (!animRunning) return;
-      t += 0.016;
-      const w = bg.width, h = bg.height, cx = w / 2, cy = h / 2 + 40;
-      const h1 = hue();
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#010408";
-      ctx.fillRect(0, 0, w, h);
-      // rotating wireframe globe
-      const R = Math.min(w, h) * 0.26;
-      ctx.strokeStyle = `hsla(${h1},100%,62%,0.22)`;
+    function hue() { return parseFloat(getComputedStyle(overlay).getPropertyValue("--jh")) || 190; }
+
+    function globe(cx, cy, r, t, h) {
+      const ry = t * 0.4, tx = 0.42;
+      const cyc = Math.cos(ry), syc = Math.sin(ry), ct = Math.cos(tx), stt = Math.sin(tx);
+      const fr = new Path2D(), bk = new Path2D();
+      for (const pts of GLOBE_LINES) {
+        let prev = null;
+        for (const p of pts) {
+          const x = p[0] * cyc + p[2] * syc;
+          const z = -p[0] * syc + p[2] * cyc;
+          const y2 = p[1] * ct - z * stt, z2 = p[1] * stt + z * ct;
+          const px = cx + x * r, py = cy + y2 * r;
+          if (prev) {
+            const P = z2 >= 0 ? fr : bk;
+            P.moveTo(prev[0], prev[1]); P.lineTo(px, py);
+          }
+          prev = [px, py];
+        }
+      }
       ctx.lineWidth = 1;
-      for (let i = 0; i < 7; i++) {
-        const ry = R * Math.cos((i / 6 - 0.5) * Math.PI);
-        const rx = R * Math.sin(Math.acos(Math.cos((i / 6 - 0.5) * Math.PI)));
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, Math.max(rx, 2), Math.abs(ry) * 0 + R * 0.12, 0, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      for (let i = 0; i < 8; i++) {
-        const a = t * 0.2 + (i / 8) * Math.PI;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, R * Math.abs(Math.cos(a)) + 0.5, R, 0, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      // reactor core pulse
-      const pulse = 1 + 0.08 * Math.sin(t * 3);
-      const coreR = R * 0.32 * pulse;
-      const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.2);
-      grad.addColorStop(0, `hsla(${h1},100%,75%,0.9)`);
-      grad.addColorStop(0.4, `hsla(${h1},100%,60%,0.35)`);
-      grad.addColorStop(1, `hsla(${h1},100%,50%,0)`);
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(cx, cy, coreR * 2.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = `hsla(${h1},100%,80%,0.9)`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
-      ctx.stroke();
-      for (let i = 0; i < 3; i++) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, coreR * (1.3 + i * 0.22), t * (0.5 + i * 0.3), t * (0.5 + i * 0.3) + 4.2);
-        ctx.strokeStyle = `hsla(${h1},100%,70%,${0.35 - i * 0.1})`;
-        ctx.stroke();
-      }
-      animFrame = requestAnimationFrame(frame);
+      ctx.strokeStyle = col(55, 0.16, h); ctx.stroke(bk);
+      ctx.strokeStyle = col(72, 0.8, h); ctx.stroke(fr);
     }
-    frame();
+
+    function reactor(cx, cy, Rr, t, h) {
+      ctx.lineCap = "round";
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(t * 0.06);
+      ctx.lineWidth = 1.3; ctx.strokeStyle = col(65, 0.55, h);
+      ctx.beginPath();
+      for (let i = 0; i < 140; i++) {
+        const a = i / 140 * Math.PI * 2;
+        const l = (i % 10 === 0) ? 15 : (i % 5 === 0) ? 9 : 4;
+        ctx.moveTo(Math.cos(a) * Rr, Math.sin(a) * Rr);
+        ctx.lineTo(Math.cos(a) * (Rr - l), Math.sin(a) * (Rr - l));
+      }
+      ctx.stroke(); ctx.restore();
+
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(-t * 0.22);
+      ctx.lineWidth = 4; ctx.strokeStyle = col(65, 0.8, h);
+      for (let k = 0; k < 4; k++) {
+        ctx.beginPath();
+        ctx.arc(0, 0, Rr * 0.92, k * 1.5708 + 0.15, k * 1.5708 + 1.25);
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(t * 0.35);
+      ctx.setLineDash([4, 10]); ctx.lineWidth = 2; ctx.strokeStyle = col(75, 0.65, h);
+      ctx.beginPath(); ctx.arc(0, 0, Rr * 0.82, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]); ctx.restore();
+
+      const N = 90, r0 = Rr * 0.6;
+      ctx.strokeStyle = col(68, 0.9, h); ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      for (let i = 0; i < N; i++) {
+        const a = i / N * Math.PI * 2 + t * 0.12;
+        const spike = Math.sin(i * 1.8 + t * 5) * Math.cos(i * 0.4 - t * 2.5);
+        const len = 5 + (amp * Rr * 0.25) * (0.35 + Math.abs(spike));
+        ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0);
+        ctx.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len));
+      }
+      ctx.stroke();
+
+      globe(cx, cy, Rr * 0.42, t, h);
+
+      const pulse = Math.sin(t * 3.5) * 0.05 + Math.sin(t * 7) * 0.02;
+      const cr = Rr * (0.16 + amp * 0.07 + pulse);
+      const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr * 2.2);
+      rg.addColorStop(0, "#ffffff");
+      rg.addColorStop(0.25, col(92, 0.95, h));
+      rg.addColorStop(0.65, col(70, 0.5, h));
+      rg.addColorStop(1, col(50, 0, h));
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.arc(cx, cy, cr * 2.2, 0, Math.PI * 2); ctx.fill();
+
+      ctx.save(); ctx.translate(cx, cy); ctx.rotate(t * 0.5);
+      ctx.strokeStyle = col(85, 0.9, h); ctx.lineWidth = Rr * 0.025;
+      for (let k = 0; k < 12; k++) {
+        const a = k / 12 * Math.PI * 2;
+        ctx.beginPath(); ctx.arc(0, 0, Rr * 0.24, a + 0.06, a + 0.4); ctx.stroke();
+      }
+      ctx.restore();
+
+      for (const orb of ORBITS) {
+        const angle = t * orb.speed + orb.phase;
+        const ox = cx + Math.cos(angle) * (Rr * orb.dist);
+        const oy = cy + Math.sin(angle) * (Rr * orb.dist * 0.65);
+        ctx.fillStyle = col(95, 0.85, h);
+        ctx.shadowColor = col(80, 1, h); ctx.shadowBlur = 9;
+        ctx.beginPath(); ctx.arc(ox, oy, orb.size * (1 + amp * 0.7), 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    function drawBg(dt, t, h) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = "#01050a"; ctx.fillRect(0, 0, W, H);
+      const rg = ctx.createRadialGradient(CX, CY, 0, CX, CY, Math.max(W, H) * 0.65);
+      rg.addColorStop(0, col(18, 0.6, h)); rg.addColorStop(1, "rgba(1,5,10,0)");
+      ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+      ctx.globalCompositeOperation = "lighter";
+
+      const hz = H * 0.68;
+      ctx.lineWidth = 1; ctx.strokeStyle = col(60, 0.1, h);
+      ctx.beginPath();
+      for (let i = 0; i < 16; i++) {
+        const f = (i + (t * 0.35) % 1) / 16;
+        const y = hz + f * f * (H - hz);
+        ctx.moveTo(0, y); ctx.lineTo(W, y);
+      }
+      for (let i = -14; i <= 14; i++) {
+        ctx.moveTo(W / 2 + i * W * 0.012, hz);
+        ctx.lineTo(W / 2 + i * W * 0.15, H);
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = col(80, 0.55, h);
+      for (const p of PARTS) {
+        p.y -= p.v * dt / 1000 / H;
+        if (p.y < 0) { p.y = 1; p.x = Math.random(); }
+        ctx.globalAlpha = p.a;
+        ctx.beginPath(); ctx.arc(p.x * W, p.y * H, p.r, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      reactor(CX, CY, R, t, h);
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    function drawWave(t, h) {
+      if (!wctx) return;
+      const w = wave.clientWidth, hh = wave.clientHeight, mid = hh / 2;
+      wctx.clearRect(0, 0, w, hh);
+      wctx.strokeStyle = col(60, 0.22, h); wctx.lineWidth = 1;
+      wctx.beginPath(); wctx.moveTo(0, mid); wctx.lineTo(w, mid); wctx.stroke();
+      const sp = curState === "speaking" ? 2.4 : 1;
+      for (let k = 0; k < 3; k++) {
+        wctx.beginPath();
+        for (let x = 0; x <= w; x += 3) {
+          const nx = x / w, env = Math.sin(nx * Math.PI);
+          const wv = Math.sin(nx * (12 + k * 8) + t * (2.2 + k * 1.2) * sp) * (hh * 0.42) * amp * env;
+          const y = mid + wv;
+          if (x === 0) wctx.moveTo(x, y); else wctx.lineTo(x, y);
+        }
+        wctx.strokeStyle = col(65 + k * 8, 0.9 - k * 0.25, h);
+        wctx.lineWidth = 2.2 - k * 0.5;
+        wctx.stroke();
+      }
+    }
+
+    function frame(ts) {
+      if (!animRunning) return;
+      animFrame = requestAnimationFrame(frame);
+      if (ts - last_ts < 25) return;
+      const dt = Math.min(ts - last_ts, 100);
+      last_ts = ts; T += dt / 1000;
+      const h = hue();
+      const tg = curState === "listening" ? 0.5 + 0.4 * Math.abs(Math.sin(T * 6))
+               : curState === "thinking" ? 0.2 + 0.22 * Math.abs(Math.sin(T * 3))
+               : curState === "speaking" ? 0.45 + 0.35 * Math.abs(Math.sin(T * 9.5) * Math.sin(T * 5.2))
+               : curState === "executing" ? 0.3 + 0.2 * Math.abs(Math.sin(T * 4))
+               : 0.07;
+      amp += (tg - amp) * 0.25;
+      drawBg(dt, T, h);
+      drawWave(T, h);
+    }
+    animFrame = requestAnimationFrame(frame);
   }
   function stopBgAnim() {
     animRunning = false;
@@ -242,8 +452,11 @@ $("aiBtn").onclick = async () => {
   let clockTimer = null;
   function startClock() {
     function tick() {
-      if (!timeEl) return;
-      timeEl.textContent = new Date().toLocaleTimeString("en-US", { hour12: false });
+      const d = new Date();
+      if (timeEl) timeEl.textContent = d.toLocaleTimeString("en-US", { hour12: false });
+      if (dateEl) dateEl.textContent = d.toLocaleDateString("en-US", {
+        weekday: "short", day: "numeric", month: "short",
+      }).toUpperCase();
     }
     tick();
     clockTimer = setInterval(tick, 1000);
@@ -268,12 +481,14 @@ $("aiBtn").onclick = async () => {
   function openOverlay() {
     overlay.hidden = false;
     if (chat) chat.innerHTML = "";
+    if (heardEl) heardEl.textContent = "";
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
     pendingAction = null;
-    setOrbState("", "IDLE");
+    setOrbState("idle");
     startBgAnim();
     startClock();
+    startPanels();
   }
   function closeOverlay() {
     overlay.hidden = true;
@@ -281,6 +496,7 @@ $("aiBtn").onclick = async () => {
     if (recognizing && recognizer) recognizer.stop();
     stopBgAnim();
     stopClock();
+    stopPanels();
   }
   closeBtn.onclick = closeOverlay;
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeOverlay(); });
@@ -288,10 +504,11 @@ $("aiBtn").onclick = async () => {
 
   async function sendToJarvis(text) {
     addMsg("you", text);
+    if (heardEl) heardEl.textContent = '▸ "' + text + '"';
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
     pendingAction = null;
-    setOrbState("thinking", "THINKING");
+    setOrbState("thinking");
     try {
       const r = await fetch("/api/ai/command", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -304,13 +521,13 @@ $("aiBtn").onclick = async () => {
         jconfirmBtn.textContent = "Confirm: " + describeAction(d.action);
       }
       speak(d.reply, () => {
-        setOrbState("", "IDLE");
+        setOrbState("idle");
         if (pendingAction) jconfirmBox.hidden = false;
         else startListening();
       });
     } catch (e) {
       addMsg("jarvis", "Request failed.");
-      setOrbState("", "IDLE");
+      setOrbState("idle");
       startListening();
     }
   }
@@ -321,7 +538,7 @@ $("aiBtn").onclick = async () => {
     pendingAction = null;
     jconfirmBox.hidden = true;
     addMsg("jarvis", "Working…");
-    setOrbState("thinking", "EXECUTING");
+    setOrbState("executing");
     try {
       const r = await fetch("/api/ai/execute", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -331,12 +548,12 @@ $("aiBtn").onclick = async () => {
       if (!r.ok) throw new Error(d.error || "failed");
       const msg = "Done — " + describeAction(action) + ".";
       addMsg("jarvis", msg);
-      speak(msg, () => { setOrbState("", "IDLE"); startListening(); });
+      speak(msg, () => { setOrbState("idle"); startListening(); });
       const state = await fetch("/api/state");
       if (state.ok) { last = await state.json(); render(last); }
     } catch (e) {
       addMsg("jarvis", "Failed: " + (e.message || "unknown error"));
-      speak("That failed.", () => { setOrbState("", "IDLE"); startListening(); });
+      speak("That failed.", () => { setOrbState("idle"); startListening(); });
     }
   };
   jcancelBtn.onclick = () => {
@@ -348,10 +565,10 @@ $("aiBtn").onclick = async () => {
   function startListening() {
     if (!recognizer || recognizing || overlay.hidden) return;
     recognizing = true;
-    setOrbState("listening", "LISTENING");
+    setOrbState("listening");
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
-    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("", "IDLE"); micAgainBtn.hidden = false; }
+    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("idle"); micAgainBtn.hidden = false; }
   }
   micAgainBtn.onclick = startListening;
 
@@ -367,7 +584,7 @@ $("aiBtn").onclick = async () => {
   recognizer.onerror = (e) => {
     recognizing = false;
     if (overlay.hidden) return;
-    setOrbState("", "IDLE");
+    setOrbState("idle");
     // "no-speech"/"aborted" are routine in a continuous listen loop — just
     // restart the mic instead of stalling on the manual button.
     if (e.error === "no-speech" || e.error === "aborted") startListening();

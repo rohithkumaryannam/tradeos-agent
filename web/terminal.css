@@ -4,39 +4,86 @@
 
 /* ── Jarvis holographic voice interface ── */
 @property --jh{syntax:'<number>';inherits:true;initial-value:190}
-.jarvis-overlay{--jh:190;--jc:hsl(var(--jh) 100% 62%);--jglow:hsl(var(--jh) 100% 62% / .55);position:fixed;inset:0;z-index:100;background:#010408;overflow:hidden;font-family:var(--mono);transition:--jh .9s ease}
+.jarvis-overlay{--jh:190;--jc:hsl(var(--jh) 100% 62%);--jglow:hsl(var(--jh) 100% 62% / .6);--jcd:hsl(var(--jh) 100% 60% / .28);--jcs:hsl(var(--jh) 100% 55% / .08);--jglass:rgba(2,10,20,.72);--jdim:hsl(var(--jh) 45% 65%);--jup:#3dffa2;--jdn:#ff5a6e;position:fixed;inset:0;z-index:100;background:#010408;overflow:hidden;font-family:var(--mono);transition:--jh .9s ease;color:hsl(var(--jh) 95% 92%)}
 #jarvisBg{position:absolute;inset:0;z-index:0}
-.jarvis-scan{position:absolute;inset:0;z-index:2;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.16) 0 1px,transparent 1px 3px)}
-.jarvis-close{position:absolute;top:14px;right:16px;z-index:5;background:none;border:0;color:#9db8d8;font-size:22px;padding:4px 10px;line-height:1}
+.jarvis-scan{position:absolute;inset:0;z-index:5;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px)}
+.jarvis-close{position:absolute;top:12px;right:14px;z-index:6;background:none;border:0;color:#9db8d8;font-size:22px;padding:4px 10px;line-height:1}
 .jarvis-close:hover{color:#fff}
-.jarvis-header{position:absolute;top:0;left:0;right:0;z-index:3;display:flex;justify-content:space-between;align-items:center;padding:16px 50px 10px 22px;border-bottom:1px solid var(--jglow)}
-.jarvis-logo{font:800 20px "Avenir Next Condensed",Futura,sans-serif;letter-spacing:.3em;color:#fff;text-shadow:0 0 14px var(--jglow)}
-.jarvis-logo .jarvis-sub{display:block;font:400 9px var(--sans);letter-spacing:.15em;color:#7fa0c8;margin-top:3px}
-.jarvis-clock{text-align:right}
-#jarvisTime{font:700 18px var(--mono);letter-spacing:.1em;color:#fff;text-shadow:0 0 10px var(--jglow)}
-#jarvisCore{position:absolute;top:92px;left:50%;transform:translateX(-50%);z-index:3;text-align:center;pointer-events:none;width:80%}
-#jarvisState{font:800 24px "Avenir Next Condensed",Futura,sans-serif;letter-spacing:.3em;color:#fff;text-shadow:0 0 16px var(--jglow)}
-#jarvisCoreNote{font-size:10px;letter-spacing:.15em;color:#7fa0c8;margin-top:5px}
-.jarvis-chat-wrap{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);z-index:3;width:min(520px,90vw);max-height:46vh;display:flex;flex-direction:column;align-items:center}
-.jarvis-chat{width:100%;max-height:34vh;overflow-y:auto;padding:6px 2px;scrollbar-width:none}
-.jarvis-chat::-webkit-scrollbar{display:none}
-.jarvis-msg{margin-bottom:8px;padding:6px 10px;border-radius:3px;background:rgba(0,0,0,.4);border-left:2px solid transparent;text-align:left;font-size:12px;line-height:1.4;backdrop-filter:blur(3px)}
-.jarvis-msg i{font-style:normal;letter-spacing:.12em;margin-right:6px;font-size:9px;font-weight:700}
+
+.jarvis-app{position:absolute;inset:0;z-index:2;display:grid;grid-template-columns:minmax(260px,24vw) 1fr minmax(260px,24vw);grid-template-rows:auto 1fr;gap:12px;padding:10px 14px}
+.jarvis-header{grid-column:1/4;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--jcd);padding-bottom:8px}
+.jarvis-logo-wrap{display:flex;align-items:center;gap:10px}
+.jarvis-logo-icon{width:24px;height:24px;border:1.5px solid var(--jc);border-radius:50%;box-shadow:0 0 12px var(--jglow);animation:jarvisSpin 14s linear infinite}
+@keyframes jarvisSpin{to{transform:rotate(360deg)}}
+.jarvis-logo{font:800 18px "Avenir Next Condensed",Futura,sans-serif;letter-spacing:.3em;color:#fff;text-shadow:0 0 14px var(--jglow)}
+.jarvis-sub{font:400 9px var(--sans);letter-spacing:.14em;color:var(--jdim);margin-top:2px}
+.jarvis-clock{text-align:center}
+#jarvisTime{font:700 20px var(--mono);letter-spacing:.12em;color:#fff;text-shadow:0 0 12px var(--jglow)}
+#jarvisDate{color:var(--jdim);font-size:9px;letter-spacing:.18em;margin-top:2px}
+.jarvis-linkbox{text-align:right;font-size:10px}
+#jarvisLink{letter-spacing:.12em;font-weight:700}
+#jarvisLink.standby{color:var(--jdim)}
+#jarvisLink.live{color:var(--jup);text-shadow:0 0 8px rgba(61,255,162,.4)}
+.jarvis-hint{color:var(--jdim);font-size:9px;letter-spacing:.08em;margin-top:2px}
+
+.jarvis-col{display:flex;flex-direction:column;gap:12px;min-height:0}
+.jarvis-col-center{min-height:0;pointer-events:none}
+.jarvis-panel{position:relative;border:1px solid var(--jcd);background:var(--jglass);backdrop-filter:blur(10px);padding:10px 12px;border-radius:4px;min-height:0;box-shadow:inset 0 0 20px rgba(0,0,0,.4)}
+.jarvis-panel.jarvis-grow{flex:1;display:flex;flex-direction:column}
+.jarvis-panel.jarvis-grow2{flex:1.4;display:flex;flex-direction:column}
+.jarvis-panel h2{font:700 10px "Avenir Next Condensed",Futura,sans-serif;letter-spacing:.25em;color:var(--jc);margin-bottom:8px;display:flex;align-items:center;gap:6px;text-shadow:0 0 8px var(--jglow)}
+.jarvis-panel h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--jcd),transparent)}
+.jarvis-dim{color:var(--jdim);font-weight:400;letter-spacing:.05em;text-shadow:none}
+
+#jarvisWave{width:100%;height:64px;display:block;border-radius:3px}
+.jarvis-row{display:flex;justify-content:space-between;margin-top:6px;letter-spacing:.14em;color:var(--jc);font-size:10px;font-weight:600}
+
+.jarvis-nodes{display:flex;align-items:center;gap:3px}
+.jarvis-node{flex:1;text-align:center;border:1px solid var(--jcd);padding:5px 1px;color:var(--jdim);border-radius:3px;background:rgba(0,0,0,.3);transition:all .3s ease}
+.jarvis-node b{display:block;font-size:9.5px;letter-spacing:.1em}
+.jarvis-node small{font-size:7.5px;letter-spacing:.05em;opacity:.8}
+.jarvis-node.on{border-color:var(--jc);color:#fff;background:hsl(var(--jh) 100% 50% / .28);box-shadow:0 0 14px var(--jglow)}
+.jarvis-arr{color:var(--jcd);font-size:12px}
+
+#jarvisChat{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none}
+#jarvisChat::-webkit-scrollbar{display:none}
+.jarvis-msg{margin-bottom:7px;padding:5px 8px;border-radius:3px;background:rgba(0,0,0,.3);border-left:2px solid transparent;font-size:11px;line-height:1.4}
+.jarvis-msg i{font-style:normal;letter-spacing:.1em;margin-right:5px;font-size:9px;font-weight:700}
 .jarvis-msg.you{border-left-color:var(--jc);color:#fff}
 .jarvis-msg.you i{color:var(--jc)}
-.jarvis-msg.jarvis{border-left-color:#3dffa2;color:#e6fff4}
-.jarvis-msg.jarvis i{color:#3dffa2}
-.jarvis-confirm-row{display:flex;gap:10px;justify-content:center;margin-top:10px}
+.jarvis-msg.jarvis{border-left-color:var(--jup);color:#e6fff4}
+.jarvis-msg.jarvis i{color:var(--jup)}
+
+.jarvis-list{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;font-size:10.5px}
+.jarvis-list::-webkit-scrollbar{display:none}
+.jarvis-mkrow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);gap:8px}
+.jarvis-mkrow b{color:#fff;letter-spacing:.06em}
+.jarvis-mkrow .jarvis-pos{font-size:9.5px;color:var(--jdim)}
+.jarvis-mkrow .jarvis-px{text-align:right;color:#fff;font-weight:600}
+.jarvis-evrow{padding:6px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:10px}
+.jarvis-evrow .jarvis-ev-t{color:var(--jdim);font-size:9px;margin-right:6px}
+.jarvis-empty{color:var(--jdim);font-size:10px;font-style:italic;padding:6px 0}
+
+.jarvis-vit{display:grid;grid-template-columns:52px 1fr;gap:5px 8px;font-size:10px}
+.jarvis-vit b{font-weight:400;color:var(--jdim);letter-spacing:.08em}
+.jarvis-vit span{color:#fff;text-align:right}
+
+#jarvisCore{position:fixed;z-index:4;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;width:min(420px,78vw)}
+#jarvisState{font:800 26px "Avenir Next Condensed",Futura,sans-serif;letter-spacing:.3em;color:#fff;text-shadow:0 0 16px var(--jglow)}
+#jarvisCoreNote{font-size:10px;letter-spacing:.15em;color:var(--jdim);margin-top:5px}
+#jarvisHeard{margin-top:8px;color:#fff;font-size:12.5px;min-height:18px;letter-spacing:.03em;text-shadow:0 0 8px rgba(255,255,255,.5)}
+#jarvisConfirm,#jarvisMicAgain{pointer-events:auto}
+.jarvis-confirm-row{display:flex;gap:10px;justify-content:center;margin-top:14px}
 .jarvis-confirm-row button{font-size:12px;padding:9px 16px}
 #jarvisConfirmBtn{background:linear-gradient(115deg,#1479ff,#1b62ec);border-color:#3286ff}
-.jarvis-mic-again{margin-top:12px;font-size:12px;padding:9px 18px;background:rgba(10,20,35,.8);border:1px solid var(--jc);color:#fff;box-shadow:0 0 12px var(--jglow)}
-.jarvis-corner{position:absolute;z-index:3;color:#7fa0c8;font-size:9px;letter-spacing:.15em;pointer-events:none}
-.jarvis-corner.tl{top:78px;left:22px}
-.jarvis-corner.tr{top:78px;right:22px;text-align:right}
-.jarvis-corner.bl{bottom:16px;left:22px}
-.jarvis-corner.br{bottom:16px;right:22px;text-align:right}
-#jarvisLink.live{color:#3dffa2}
-#jarvisLink.err{color:#ff5a6e}
+.jarvis-mic-again{margin-top:14px;font-size:12px;padding:9px 18px;background:rgba(10,20,35,.8);border:1px solid var(--jc);color:#fff;box-shadow:0 0 12px var(--jglow)}
+
+.jarvis-corner{position:absolute;z-index:3;color:var(--jdim);font-size:9px;letter-spacing:.15em;pointer-events:none}
+.jarvis-corner.tl{top:4px;left:14px}
+.jarvis-corner.tr{top:4px;right:14px;text-align:right}
+.jarvis-corner.bl{bottom:4px;left:14px}
+.jarvis-corner.br{bottom:4px;right:14px;text-align:right}
+@media(max-width:900px){.jarvis-app{grid-template-columns:1fr;grid-template-rows:auto auto auto auto}.jarvis-col-center{display:none}#jarvisCore{position:absolute}}
 .ip-banner{display:flex;gap:10px;align-items:center;justify-content:space-between;border-color:#8a3030;background:#ff365d14}
 .ip-banner strong{color:#fff}
 .ip-banner button{flex-shrink:0;font-size:9px}.pending-box{display:none;gap:10px;align-items:center}.pending-box.show{display:flex}dialog{color:var(--text);background:#081421;border:1px solid #26445f;border-radius:10px;padding:22px;width:min(560px,calc(100vw - 28px));max-height:85vh;box-shadow:0 30px 100px #000b}dialog::backdrop{background:#010812c9;backdrop-filter:blur(5px)}dialog.large-dialog{width:min(1050px,calc(100vw - 28px))}.dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.dialog-head h2,dialog h2{font-weight:500;font-size:19px;margin:0}.dialog-head>button{padding:1px 8px;font-size:22px;border:0;background:transparent}dialog p{font-size:11px;color:var(--mut);line-height:1.6}dialog h3{font-size:12px;font-weight:500;margin-top:20px}.control-actions{display:flex;flex-wrap:wrap;gap:8px}.info-box{background:#06101b;border:1px solid var(--line);padding:12px;margin-top:16px;font-size:11px;color:var(--mut)}dialog .row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line)}.k{color:var(--mut)}.v{font-family:var(--mono)}.health-item{padding:10px;margin:7px 0;border:1px solid var(--line);border-radius:6px}.health-item strong{display:flex;justify-content:space-between;font-size:11px}.health-item p{margin-bottom:0}.toolbar{display:flex;gap:8px;align-items:center;margin:12px 0}.toolbar h3{flex:1;margin:0}.journal-scroll{max-height:65vh}dialog table td{padding:9px;font-size:10px}dialog table th{font-size:10px}dialog .table-scroll{max-height:55vh}.risk-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}.risk-field{display:grid;gap:5px;font-size:11px;color:var(--mut)}.risk-form-title{grid-column:1/-1;color:var(--text);border-top:1px solid var(--line);padding-top:12px}.dialog-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:20px}.strategy-options{display:grid;grid-template-columns:1fr 1fr;gap:15px}.strategy-option{padding:15px;border:1px solid var(--line);border-radius:7px}.eyebrow{color:var(--blue);font-size:9px;text-transform:uppercase;letter-spacing:1px}.strategy-option h4{margin:7px 0}#researchNote{color:var(--warn);font-size:10px;margin:14px 0}#researchMeta{font-size:10px;color:var(--mut);margin-bottom:10px}.toast{position:fixed;bottom:40px;right:20px;z-index:100;max-width:420px;background:#102239;border:1px solid #247cce;border-radius:7px;padding:15px 40px 15px 15px;box-shadow:0 10px 40px #0009}.toast.error{border-color:var(--down)}.toast button{position:absolute;right:7px;top:6px;border:0;background:none}.search-result,.market-result{display:flex;width:100%;align-items:center;gap:10px;text-align:left;margin-top:6px;padding:12px}.search-result small,.market-result small{margin-left:auto;color:var(--mut);font-size:9px}#searchResults{margin-top:10px}.highlight-panel{outline:1px solid var(--blue);box-shadow:0 0 20px #1674ff33}.chart-panel:fullscreen{height:100vh;background:var(--bg)}.chart-panel:fullscreen #priceChart{height:calc(100vh - 160px)}::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:#263b55;border-radius:3px}
