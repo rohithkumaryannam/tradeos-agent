@@ -46,14 +46,16 @@ def ask_json(prompt: str, *, system: str = "", max_tokens: int = 400,
     """Like ask(), but instructs the model to reply with a single JSON object
     and parses it. Returns None on any failure (unavailable, bad JSON, etc.)
     — callers must treat that as "could not understand," never as an action.
-    Strips ```json code fences some models wrap responses in."""
+    Strips ```json code fences, and tolerates free models (e.g. the
+    OpenRouter free tier) that wrap the object in prose despite instructions,
+    by extracting the outermost {...} span before parsing."""
     import json as _json
     json_system = (system + "\n\n" if system else "") + (
         "Respond with ONLY a single valid JSON object. No prose before or "
         "after it, no markdown code fences."
     )
     text = ask(prompt, system=json_system, max_tokens=max_tokens,
-               temperature=temperature, timeout=timeout)
+               temperature=temperature, timeout=timeout, json_mode=True)
     if not text:
         return None
     text = text.strip()
@@ -66,13 +68,21 @@ def ask_json(prompt: str, *, system: str = "", max_tokens: int = 400,
         parsed = _json.loads(text)
         return parsed if isinstance(parsed, dict) else None
     except (ValueError, TypeError):
-        log.warning("ask_json: model did not return valid JSON: %r", text[:200])
-        return None
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            parsed = _json.loads(text[start:end + 1])
+            return parsed if isinstance(parsed, dict) else None
+        except (ValueError, TypeError):
+            pass
+    log.warning("ask_json: model did not return valid JSON: %r", text[:200])
+    return None
 
 
 def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
         temperature: float = 0.4, timeout: int = 20,
-        thinking_budget: int | None = None) -> str | None:
+        thinking_budget: int | None = None, json_mode: bool = False) -> str | None:
     """Single-turn text generation. Returns the model's text, or None on any
     failure (never raises).
 
@@ -89,17 +99,23 @@ def ask(prompt: str, *, system: str = "", max_tokens: int = 256,
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+        payload = {"model": model_name(), "messages": messages,
+                   "max_tokens": max_tokens, "temperature": temperature}
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        headers = {"Authorization": f"Bearer {openrouter_key}",
+                   "Content-Type": "application/json",
+                   "HTTP-Referer": "https://tradeos-agent-production.up.railway.app",
+                   "X-Title": "TradeOS"}
         try:
-            r = requests.post(
-                _OPENROUTER_URL,
-                headers={"Authorization": f"Bearer {openrouter_key}",
-                         "Content-Type": "application/json",
-                         "HTTP-Referer": "https://tradeos-agent-production.up.railway.app",
-                         "X-Title": "TradeOS"},
-                json={"model": model_name(), "messages": messages,
-                      "max_tokens": max_tokens, "temperature": temperature},
-                timeout=timeout,
-            )
+            r = requests.post(_OPENROUTER_URL, headers=headers, json=payload, timeout=timeout)
+            if r.status_code >= 400 and json_mode:
+                # Some free-tier models reject response_format outright — retry plain.
+                log.warning("OpenRouter %s -> %s with response_format, retrying without",
+                            model_name(), r.status_code)
+                payload = dict(payload)
+                del payload["response_format"]
+                r = requests.post(_OPENROUTER_URL, headers=headers, json=payload, timeout=timeout)
             if r.status_code >= 400:
                 log.warning("OpenRouter %s -> %s", model_name(), r.status_code)
                 return None

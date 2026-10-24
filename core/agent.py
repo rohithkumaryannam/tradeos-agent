@@ -906,7 +906,7 @@ class Agent:
             '{"name": "...", "args": {...}}}'
         )
         prompt = f"Current status:\n{self.jarvis_status_summary()}\n\nUser said: {text}"
-        result = ai.ask_json(prompt, system=system, max_tokens=300)
+        result = ai.ask_json(prompt, system=system, max_tokens=600)
         if not result or "reply" not in result:
             return {"reply": "I didn't catch that clearly — can you repeat it?", "action": None}
         action = result.get("action")
