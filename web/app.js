@@ -306,12 +306,12 @@ $("aiBtn").onclick = async () => {
       speak(d.reply, () => {
         setOrbState("", "IDLE");
         if (pendingAction) jconfirmBox.hidden = false;
-        else micAgainBtn.hidden = false;
+        else startListening();
       });
     } catch (e) {
       addMsg("jarvis", "Request failed.");
       setOrbState("", "IDLE");
-      micAgainBtn.hidden = false;
+      startListening();
     }
   }
 
@@ -331,26 +331,27 @@ $("aiBtn").onclick = async () => {
       if (!r.ok) throw new Error(d.error || "failed");
       const msg = "Done — " + describeAction(action) + ".";
       addMsg("jarvis", msg);
-      speak(msg, () => { setOrbState("", "IDLE"); micAgainBtn.hidden = false; });
+      speak(msg, () => { setOrbState("", "IDLE"); startListening(); });
       const state = await fetch("/api/state");
       if (state.ok) { last = await state.json(); render(last); }
     } catch (e) {
       addMsg("jarvis", "Failed: " + (e.message || "unknown error"));
-      speak("That failed.", () => { setOrbState("", "IDLE"); micAgainBtn.hidden = false; });
+      speak("That failed.", () => { setOrbState("", "IDLE"); startListening(); });
     }
   };
   jcancelBtn.onclick = () => {
     pendingAction = null; jconfirmBox.hidden = true;
-    addMsg("jarvis", "Cancelled."); micAgainBtn.hidden = false;
+    addMsg("jarvis", "Cancelled.");
+    startListening();
   };
 
   function startListening() {
-    if (!recognizer || recognizing) return;
+    if (!recognizer || recognizing || overlay.hidden) return;
     recognizing = true;
     setOrbState("listening", "LISTENING");
     jconfirmBox.hidden = true;
     micAgainBtn.hidden = true;
-    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("", "IDLE"); }
+    try { recognizer.start(); } catch (e) { recognizing = false; setOrbState("", "IDLE"); micAgainBtn.hidden = false; }
   }
   micAgainBtn.onclick = startListening;
 
@@ -363,7 +364,15 @@ $("aiBtn").onclick = async () => {
   recognizer.interimResults = false;
   recognizer.maxAlternatives = 1;
   recognizer.onresult = (e) => sendToJarvis(e.results[0][0].transcript);
-  recognizer.onerror = () => { recognizing = false; if (!overlay.hidden) { setOrbState("", "IDLE"); micAgainBtn.hidden = false; } };
+  recognizer.onerror = (e) => {
+    recognizing = false;
+    if (overlay.hidden) return;
+    setOrbState("", "IDLE");
+    // "no-speech"/"aborted" are routine in a continuous listen loop — just
+    // restart the mic instead of stalling on the manual button.
+    if (e.error === "no-speech" || e.error === "aborted") startListening();
+    else micAgainBtn.hidden = false;
+  };
   recognizer.onend = () => { recognizing = false; };
   jbtn.onclick = () => { openOverlay(); startListening(); };
 })();
