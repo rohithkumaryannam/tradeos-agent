@@ -468,11 +468,20 @@ function drawPriceChart(chart, position, trades) {
   const cv = $("priceChart"); const { ctx, w, h } = setup(cv);
   if (!chart || !chart.length) { ctx.fillStyle = "#8294b4"; ctx.font = "12px system-ui"; ctx.textAlign = "center"; ctx.fillText("Run a cycle to load market data", w / 2, h / 2); return; }
   const pad = 10;
-  const lo0 = Math.min(...chart.map(c => c.l)), hi0 = Math.max(...chart.map(c => c.h));
-  // widen the range slightly so SL/TP lines near the edge aren't clipped
+  // Percentile-clipped range (not raw min/max): a single outlier wick — or a
+  // far-off liquidation price on a leveraged position — used to stretch the
+  // whole y-axis so badly that normal price action elsewhere in the window
+  // looked like a flat line by comparison. Clip the extreme 2% of wicks so
+  // the visible candles stay readable; SL/TP (normally close to price) still
+  // widen the range if needed, but liquidation (often 20-30%+ away) no
+  // longer forces the whole chart to rescale around it.
+  const sortedLows = chart.map(c => c.l).sort((a, b) => a - b);
+  const sortedHighs = chart.map(c => c.h).sort((a, b) => a - b);
+  const pct = (arr, p) => arr[Math.max(0, Math.min(arr.length - 1, Math.round((arr.length - 1) * p)))];
+  const lo0 = pct(sortedLows, 0.02), hi0 = pct(sortedHighs, 0.98);
   const vals = [lo0, hi0];
   if (position) {
-    [position.sl, position.tp, position.liquidation].forEach(v => { if (v != null) vals.push(v); });
+    [position.sl, position.tp].forEach(v => { if (v != null) vals.push(v); });
   }
   const lo = Math.min(...vals), hi = Math.max(...vals);
   const rng = (hi - lo) || 1;
