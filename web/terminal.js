@@ -82,7 +82,16 @@ renderFeed = function(feed){
  $('feed').innerHTML=html(filtered);$('fullFeed').innerHTML=html(feed||[]);
 };
 $('feedFilter').onchange=()=>renderFeed(last?.feed);
-function terminalCanvas(id){const cv=$(id),dpr=devicePixelRatio||1,w=cv.clientWidth,h=parseFloat(getComputedStyle(cv).height)||Number(cv.getAttribute('height'))||100;const pw=Math.round(w*dpr),ph=Math.round(h*dpr);const ctx=cv.getContext('2d');if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph;}else{ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,pw,ph);}ctx.scale(dpr,dpr);return{cv,ctx,w,h};}
+function terminalCanvas(id){const cv=$(id),dpr=devicePixelRatio||1,w=cv.clientWidth,h=parseFloat(getComputedStyle(cv).height)||Number(cv.getAttribute('height'))||100;const ctx=cv.getContext('2d');
+ // A hidden canvas (e.g. the dashboard while another route is showing, or
+ // vice versa) reports clientWidth 0. The WebSocket keeps pushing frames on
+ // every route, so without this guard a background tick would shrink the
+ // backing buffer to 0 and corrupt it — self-healing only on a hard reload.
+ // Skip the resize entirely and leave the last good buffer alone; drawing
+ // into it while invisible is harmless, and the next visible render resizes
+ // and redraws correctly.
+ if(!w)return{cv,ctx,w:dpr?cv.width/dpr:0,h:dpr?cv.height/dpr:0};
+ const pw=Math.round(w*dpr),ph=Math.round(h*dpr);if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph;}else{ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,pw,ph);}ctx.scale(dpr,dpr);return{cv,ctx,w,h};}
 function spark(id,values,color='#2382ff'){
  if(!$(id))return;const {ctx,w,h}=terminalCanvas(id);const vals=values.filter(Number.isFinite);if(vals.length<2)return;
  const lo=Math.min(...vals),hi=Math.max(...vals),rng=hi-lo||1,y=v=>h-4-(v-lo)/rng*(h-8),x=i=>i/(vals.length-1)*w;
