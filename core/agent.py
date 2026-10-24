@@ -885,7 +885,12 @@ class Agent:
                 lines.append("full trade history: no closed trades yet")
             recent = self.trades[-10:]
             net = sum(float(t.get("pnl") or 0) for t in recent if t.get("pnl") not in (None, ""))
-            lines.append(f"last {len(recent)} trade events net_pnl={net:.2f}")
+            recent_wins = sum(1 for t in recent if t.get("win"))
+            recent_losses = len(recent) - recent_wins
+            lines.append(
+                f"last {len(recent)} closed trades: {recent_wins} wins / {recent_losses} losses "
+                f"(win_rate={round(recent_wins / len(recent) * 100, 1) if recent else 0}%), net_pnl={net:.2f}"
+            )
             return "\n".join(lines)
 
     def jarvis_command(self, text: str) -> dict:
