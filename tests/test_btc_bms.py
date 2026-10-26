@@ -86,6 +86,31 @@ def test_bullish_rejection_at_a_buy_zone_enters_long():
     assert sig.stop_loss < zone_low   # SL sits just past the zone's far edge
 
 
+def test_holds_when_price_runs_past_the_zone_before_entry_closes():
+    # Same bullish-rejection setup as above, but the actual entry candle
+    # (one bar after the engulfing/rejection candle) gaps down through the
+    # zone's far edge before closing — by the time entry is taken, the
+    # computed stop-loss (fixed to the zone) is no longer below entry. A
+    # real incident: this used to fire ENTER_LONG anyway, and the risk
+    # engine rejected it outright ("stop and target must bracket entry in
+    # the trade direction") — a silently lost trade instead of a clean
+    # HOLD, and the strategy's own responsibility to never offer an
+    # invalid bracket in the first place.
+    candles, zone_low, _ = _uptrend_to_zone_setup()
+    prev_o, prev_cl = 1018, 1013
+    candles.append(_c(prev_o, prev_o + 0.2, zone_low + 1, prev_cl))
+    eng_o, eng_cl = 1012, 1020
+    candles.append(_c(eng_o, eng_cl + 0.3, zone_low + 0.5, eng_cl))
+    collapse = zone_low - 50
+    candles.append(_c(1020, 1020, collapse - 1, collapse))
+
+    strat = Strategy(swing_lookback=2)
+    strat.required_candles = 10
+    sig = strat.generate(candles, None)
+    assert sig.action == Action.HOLD
+    assert "moved past the zone" in sig.reason
+
+
 def test_bearish_rejection_at_a_sell_zone_enters_short():
     candles = []
     vals = [1100, 1095, 1090, 1085, 1080]

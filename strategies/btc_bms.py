@@ -177,6 +177,14 @@ class Strategy(BaseStrategy):
             entry = float(candles[-1]["close"])
             sl = zone_low * (1 - self.sl_buffer_pct / 100)
             tp = entry + (entry - sl) * self.fallback_tp_mult
+            # The rejection/zone checks above used the PRIOR candle (the
+            # engulfing one); entry is this candle's close, one bar later.
+            # If price has already run past the zone by then, sl (fixed to
+            # the zone's edge) can end up on the wrong side of entry — an
+            # invalid bracket the risk engine would reject anyway. Catch it
+            # here with a clear reason instead of firing a doomed signal.
+            if not (sl < entry < tp):
+                return Signal(Action.HOLD, "price moved past the zone before the entry candle closed")
             return Signal(Action.ENTER_LONG, "bullish rejection at a buy zone in an uptrend",
                           stop_loss=sl, take_profit=tp)
 
@@ -194,5 +202,8 @@ class Strategy(BaseStrategy):
         entry = float(candles[-1]["close"])
         sl = zone_high * (1 + self.sl_buffer_pct / 100)
         tp = entry - (sl - entry) * self.fallback_tp_mult
+        # Same staleness check as the long side, mirrored for a short.
+        if not (tp < entry < sl):
+            return Signal(Action.HOLD, "price moved past the zone before the entry candle closed")
         return Signal(Action.ENTER_SHORT, "bearish rejection at a sell zone in a downtrend",
                       stop_loss=sl, take_profit=tp)
