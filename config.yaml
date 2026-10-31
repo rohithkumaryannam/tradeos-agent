@@ -31,28 +31,40 @@ execution:
 #   - mean_reversion: 15m low-ADX Bollinger-band extremes confirmed by RSI,
 #     with an ATR stop, middle-band target, and 32-bar time-stop.
 #   - donchian_breakout: 15m volume-confirmed channel breakout. Run on
-#     DOGEUSD/BTCUSD/XRPUSD (tags donchian_breakout/donchian_btc/
-#     donchian_xrp). A 1-year holdout backtest (see research.py) confirmed
-#     real positive expectancy on DOGEUSD (+6.9% net, 26% win rate, 84
-#     trades), but the SAME strategy lost heavily on BTCUSD (-32.6%, 194
-#     holdout trades) and XRPUSD (-25.8%, 183 holdout trades) on equally
-#     large samples. BTC/XRP were reinstated at the user's explicit request
-#     despite this evidence — there is no backtested edge for either, this
-#     is a known, accepted risk, not a recommendation. Live data as of
-#     2026-10-31 (135 trades since the Oct 24 ledger correction) now agrees
-#     with the backtest on BTC specifically: donchian_btc is 25% win rate,
-#     profit factor 0.46, -$11.01 — the single biggest drag on the account.
-#     XRP's version of the same strategy is modestly positive live
-#     (donchian_xrp: 36.8% win rate, PF 1.1, +$2.06), so only BTC is flagged
-#     as a live-confirmed loser, not the strategy itself.
-#     All three subs (donchian_btc/donchian_xrp/donchian_breakout) override
-#     fallback_tp_mult to 2.0 (default 8.0) at the user's request,
-#     2026-10-24 — they felt the default's ~8:1 fallback TP distance was
-#     too wide and asked for a 1:2 risk:reward specifically (matching the
-#     risk engine's own stop_loss_pct/take_profit_pct default ratio below).
-#     The real exit is still the trailing Donchian channel cross, not this
-#     TP; this only pulls in the rarely-hit fallback bracket order.
-#     Stop-loss distance (atr_stop_mult) is unchanged.
+#     DOGEUSD/XRPUSD (tags donchian_breakout/donchian_xrp) as of 2026-10-31
+#     — BTCUSD moved to mastermind (below). A 1-year holdout backtest (see
+#     research.py) confirmed real positive expectancy on DOGEUSD (+6.9%
+#     net, 26% win rate, 84 trades), but the SAME strategy lost heavily on
+#     BTCUSD (-32.6%, 194 holdout trades) and XRPUSD (-25.8%, 183 holdout
+#     trades) on equally large samples. BTC/XRP were reinstated at the
+#     user's explicit request despite this evidence — there is no
+#     backtested edge for either, this was a known, accepted risk, not a
+#     recommendation. Live data confirmed the backtest on BTC specifically:
+#     135 trades since the Oct 24 ledger correction put donchian_btc at 25%
+#     win rate, profit factor 0.46, -$11.01 — the single biggest drag on
+#     the account, which is why BTC was moved off it. XRP's version of the
+#     same strategy stayed modestly positive live (donchian_xrp: 36.8% win
+#     rate, PF 1.1, +$2.06), so XRP/DOGE are unchanged.
+#     Both remaining subs override fallback_tp_mult to 2.0 (default 8.0) at
+#     the user's request, 2026-10-24 — they felt the default's ~8:1
+#     fallback TP distance was too wide and asked for a 1:2 risk:reward
+#     specifically (matching the risk engine's own stop_loss_pct/
+#     take_profit_pct default ratio below). The real exit is still the
+#     trailing Donchian channel cross, not this TP; this only pulls in the
+#     rarely-hit fallback bracket order. Stop-loss distance (atr_stop_mult)
+#     is unchanged.
+#   - mastermind: NY-session (12AM-4AM New York) opening-range breakout
+#     with a structural invalidation/re-arm cascade instead of a one-shot
+#     stop — see strategies/mastermind.py for the full spec and judgment
+#     calls. Designed by the user from a live BTC trade example (BOS/CHoCH
+#     structure chart) specifically to replace donchian_btc's confirmed
+#     live underperformance (above) with something that treats a failed
+#     breakout as information (flip direction) instead of just eating the
+#     stop. Assigned to BTCUSD 2026-10-31. No backtest exists yet — this is
+#     a fresh design based on the user's own discretionary read of BTC
+#     price action, not backtested evidence; same "known, accepted risk"
+#     framing as the rest of this account's symbol assignments until it's
+#     been run and evaluated on real trades.
 #   - btc_bms: 5m price-action zone rejection with structure exits.
 #   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
 #     Was on 1000SHIBUSD; removed 2026-10-23 at the user's request after
@@ -84,7 +96,7 @@ strategy:
   name: combo
   params:
     subs:
-      - { name: donchian_breakout, tag: donchian_btc, symbols: [BTCUSD], params: { fallback_tp_mult: 2.0 } }
+      - { name: mastermind, tag: donchian_btc, symbols: [BTCUSD] }
       - { name: mean_reversion, tag: mean_reversion, symbols: [ETHUSD] }
       - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD], params: { fallback_tp_mult: 2.0 } }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD], params: { fallback_tp_mult: 2.0 } }
