@@ -31,39 +31,51 @@ execution:
 #   - mean_reversion: 15m low-ADX Bollinger-band extremes confirmed by RSI,
 #     with an ATR stop, middle-band target, and 32-bar time-stop.
 #   - donchian_breakout: 15m volume-confirmed channel breakout. Run on
-#     DOGEUSD/BTCUSD/XRPUSD/SOLUSD (tags donchian_breakout/donchian_btc/
-#     donchian_xrp/darkknight_sol — the SOLUSD slot kept its old tag name
-#     when its strategy was swapped, see below).
-#     A 1-year holdout backtest (see research.py) confirmed real positive
-#     expectancy on DOGEUSD (+6.9% net, 26% win rate, 84 trades), but the
-#     SAME strategy lost heavily on BTCUSD (-32.6%, 194 holdout trades) and
-#     XRPUSD (-25.8%, 183 holdout trades) on equally large samples. BTC/XRP
-#     were reinstated at the user's explicit request despite this evidence
-#     — there is no backtested edge for either, this is a known, accepted
-#     risk, not a recommendation. SOLUSD has not been backtested with this
-#     strategy at all — assigned at the user's explicit request, 2026-10-24,
-#     to match what BTC/XRP/DOGE are already running.
-#     All four subs (donchian_btc/donchian_xrp/donchian_breakout/
-#     darkknight_sol) override fallback_tp_mult to 2.0 (default 8.0) at the
-#     user's request, 2026-10-24 — they felt the default's ~8:1 fallback TP
-#     distance was too wide and asked for a 1:2 risk:reward specifically
-#     (matching the risk engine's own stop_loss_pct/take_profit_pct default
-#     ratio below). The real exit is still the trailing Donchian channel
-#     cross, not this TP; this only pulls in the rarely-hit fallback bracket
-#     order. Stop-loss distance (atr_stop_mult) is unchanged.
+#     DOGEUSD/BTCUSD/XRPUSD (tags donchian_breakout/donchian_btc/
+#     donchian_xrp). A 1-year holdout backtest (see research.py) confirmed
+#     real positive expectancy on DOGEUSD (+6.9% net, 26% win rate, 84
+#     trades), but the SAME strategy lost heavily on BTCUSD (-32.6%, 194
+#     holdout trades) and XRPUSD (-25.8%, 183 holdout trades) on equally
+#     large samples. BTC/XRP were reinstated at the user's explicit request
+#     despite this evidence — there is no backtested edge for either, this
+#     is a known, accepted risk, not a recommendation. Live data as of
+#     2026-10-31 (135 trades since the Oct 24 ledger correction) now agrees
+#     with the backtest on BTC specifically: donchian_btc is 25% win rate,
+#     profit factor 0.46, -$11.01 — the single biggest drag on the account.
+#     XRP's version of the same strategy is modestly positive live
+#     (donchian_xrp: 36.8% win rate, PF 1.1, +$2.06), so only BTC is flagged
+#     as a live-confirmed loser, not the strategy itself.
+#     All three subs (donchian_btc/donchian_xrp/donchian_breakout) override
+#     fallback_tp_mult to 2.0 (default 8.0) at the user's request,
+#     2026-10-24 — they felt the default's ~8:1 fallback TP distance was
+#     too wide and asked for a 1:2 risk:reward specifically (matching the
+#     risk engine's own stop_loss_pct/take_profit_pct default ratio below).
+#     The real exit is still the trailing Donchian channel cross, not this
+#     TP; this only pulls in the rarely-hit fallback bracket order.
+#     Stop-loss distance (atr_stop_mult) is unchanged.
 #   - btc_bms: 5m price-action zone rejection with structure exits.
 #   - time_series_momentum: 1h multi-horizon momentum with EMA confirmation.
 #     Was on 1000SHIBUSD; removed 2026-10-23 at the user's request after
 #     live losses. time_series_momentum itself is still installed but not
 #     currently assigned to any symbol.
+#   - paused: no-op strategy (never enters). SOLUSD's slot (tag
+#     darkknight_sol, kept for continuity) was switched to this 2026-10-31
+#     at the user's request — darkknight_sol ran there since 2026-10-24
+#     unbacktested, and the user wants to reconsider the symbol later. The
+#     switch was applied with an open SOLUSD position still live; left
+#     alone to close on its own existing exchange-side stop/target per the
+#     user's explicit choice, since darkknight_sol's own in-position
+#     behavior was already a no-op (pure exchange-bracket exit) — swapping
+#     strategies didn't change anything about how that specific trade gets
+#     managed.
 #   - darkknight_sol (strategy module): 4H EMA50/200 trend filter +
 #     support/resistance breakout, RSI + volume confirmation, fixed SL/TP
 #     from entry. Reconstructed from a public TradingView listing's
 #     description (source is invite-only, so this is an independent
 #     approximation, not a verified reproduction) — see
-#     strategies/darkknight_sol.py. No longer assigned to any symbol as of
-#     2026-10-24 (SOLUSD switched to donchian_breakout, above) — still
-#     installed and selectable again via the dashboard's per-coin panel.
+#     strategies/darkknight_sol.py. Not assigned to any symbol as of
+#     2026-10-31 — still installed and selectable via the dashboard's
+#     per-coin panel.
 #
 # A live Delta account has one net position per symbol. The `symbols` field on
 # each sub-strategy gives it exclusive ownership of its product, so all active
@@ -77,7 +89,7 @@ strategy:
       - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD], params: { fallback_tp_mult: 2.0 } }
       - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD], params: { fallback_tp_mult: 2.0 } }
       - { name: btc_bms, tag: btc_bms, symbols: [ADAUSD] }
-      - { name: donchian_breakout, tag: darkknight_sol, symbols: [SOLUSD], params: { fallback_tp_mult: 2.0 } }
+      - { name: paused, tag: darkknight_sol, symbols: [SOLUSD] }
 
 # ── Risk engine (applies to every trade) ──
 risk:

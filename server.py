@@ -41,7 +41,7 @@ log = logging.getLogger("tradeos.server")
 ROOT = Path(__file__).resolve().parent
 settings = Settings.load()
 agent = Agent(settings)
-CONFIG_REVISION = 17
+CONFIG_REVISION = 18
 CONFIG_RISK = {
     key: getattr(settings.risk, key) for key in (
         "max_portfolio_risk_pct", "max_open_positions",
