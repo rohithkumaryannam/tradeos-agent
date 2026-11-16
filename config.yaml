@@ -50,10 +50,10 @@ execution:
 #     vs -61%, fewer trades -> less fee drag); only DOGE's last-30% holdout
 #     was positive (+1.7%, PF 1.05). Live: BTC at 8x is +$22.6 over 7 trades
 #     since Nov 5 (3 winners, all shorts in the November selloff — too
-#     small/regime-specific to count as edge). BTC/ETH/ADA run the default
-#     8x; XRP/DOGE/SOL still carry the 1:2 (2.0) override the user set on
-#     2026-10-24 — the backtest says 2x is the weakest setting there and
-#     they may be moved to 8x (or 4x) once the user decides.
+#     small/regime-specific to count as edge). Live BTC/ETH/ADA ran the default
+#     8x; XRP/DOGE/SOL carried the 1:2 (2.0) override the user set on
+#     2026-10-24 and were moved to 8x on 2026-11-16 (backtest: 2x was the
+#     weakest setting there). All six coins now run 8x.
 #   - Earlier history, for context: donchian_btc at 2x lost -$11.15 over 33
 #     live trades (PF 0.54); BTC then ran mastermind 2026-10-31..11-05
 #     (38 trades, +$3.49 before fees, roughly breakeven), and the user moved
@@ -76,10 +76,10 @@ strategy:
     subs:
       - { name: donchian_breakout, tag: donchian_btc, symbols: [BTCUSD], params: { fallback_tp_mult: 8.0 } }
       - { name: donchian_breakout, tag: mean_reversion, symbols: [ETHUSD], params: { fallback_tp_mult: 8.0 } }
-      - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD], params: { fallback_tp_mult: 2.0 } }
-      - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD], params: { fallback_tp_mult: 2.0 } }
+      - { name: donchian_breakout, tag: donchian_xrp, symbols: [XRPUSD], params: { fallback_tp_mult: 8.0 } }
+      - { name: donchian_breakout, tag: donchian_breakout, symbols: [DOGEUSD], params: { fallback_tp_mult: 8.0 } }
       - { name: donchian_breakout, tag: btc_bms, symbols: [ADAUSD], params: { fallback_tp_mult: 8.0 } }
-      - { name: donchian_breakout, tag: darkknight_sol, symbols: [SOLUSD], params: { fallback_tp_mult: 2.0 } }
+      - { name: donchian_breakout, tag: darkknight_sol, symbols: [SOLUSD], params: { fallback_tp_mult: 8.0 } }
 
 # ── Risk engine (applies to every trade) ──
 risk:
