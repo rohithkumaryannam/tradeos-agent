@@ -132,6 +132,17 @@ class DeltaClient:
         result = self._request("GET", f"{ENDPOINTS['tickers']}/{symbol}")
         return result if isinstance(result, dict) else {}
 
+    def get_products(self, contract_types: str = "perpetual_futures") -> list[dict]:
+        """Every live product of the given type (public)."""
+        result = self._request("GET", ENDPOINTS["products"],
+                               params={"contract_types": contract_types, "states": "live"})
+        return result if isinstance(result, list) else []
+
+    def get_tickers(self, contract_types: str = "perpetual_futures") -> list[dict]:
+        """Latest ticker for every product of the given type (public)."""
+        result = self._request("GET", ENDPOINTS["tickers"], params={"contract_types": contract_types})
+        return result if isinstance(result, list) else []
+
     def get_product(self, symbol: str) -> dict:
         """Product metadata (needed for product_id and contract value)."""
         result = self._request("GET", f"{ENDPOINTS['products']}/{symbol}")

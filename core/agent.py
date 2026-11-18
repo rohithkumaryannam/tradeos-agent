@@ -17,12 +17,15 @@ Key methods:
 """
 from __future__ import annotations
 import csv
+import functools
 import json
 import logging
 import os
+import re
 import threading
 import time
 import math
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
@@ -125,6 +128,29 @@ def _price_str(p: float | None) -> str:
     return "" if r is None else str(r)
 
 
+def _as_bool(raw) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+@functools.lru_cache(maxsize=None)
+def strategy_meta(name: str) -> dict:
+    """Defaults, timeframe and one-paragraph description of a strategy
+    module, for the dashboard. Cached: modules don't change at runtime."""
+    import importlib
+    import inspect
+    strategy = load_strategy(name, {})
+    doc = inspect.getdoc(importlib.import_module(f"strategies.{name}")) or ""
+    return {
+        "defaults": dict(strategy.params),
+        "resolution": getattr(strategy, "preferred_resolution", None),
+        "resolutions": list(getattr(strategy, "supported_resolutions", None) or []),
+        "required_candles": getattr(strategy, "required_candles", None),
+        "description": " ".join(doc.split("\n\n")[0].split()),
+    }
+
+
 class Agent:
     def __init__(self, settings: Settings, client: DeltaClient | None = None, clock=None):
         self.s = settings
@@ -152,7 +178,7 @@ class Agent:
 
         # structured completed-trade ledger (persists via the CSV log)
         self.trades: list[dict] = []
-        self.trade_history_limit = 500
+        self.trade_history_limit = 5000
         self._load_trades_from_log()
 
         self.auto = True                 # auto-execute vs manual confirm
@@ -230,6 +256,8 @@ class Agent:
                     symbols = spec.get("symbols")
                 if symbols and sym not in symbols:
                     continue
+                if isinstance(spec, dict) and spec.get("enabled", True) is False:
+                    sub_name, params = "paused", {}
                 strategy = load_strategy(sub_name, params)
                 resolution = getattr(strategy, "preferred_resolution", self.s.resolution)
                 key = f"{sym}:{tag}"
@@ -394,18 +422,20 @@ class Agent:
 
     # ── per-coin strategy assignment (combo `subs`) ──
     def update_sub(self, tag: str, *, name: str | None = None,
-                    params: dict | None = None, risk_pct: float | None = None) -> dict:
+                    params: dict | None = None, risk_pct: float | None = None,
+                    enabled: bool | None = None, reset_params: bool = False) -> dict:
         """Change which strategy a combo slot (identified by its stable `tag`,
-        e.g. "donchian_xrp") runs, and/or its params and per-trade risk cap —
-        the self-service version of what used to require a config.yaml edit
-        and a redeploy. Changing the strategy class itself is blocked while
-        its symbol(s) have an open position (same guard as set_strategy);
-        params and risk_pct only affect future entries, so they're always
-        safe to change live."""
+        e.g. "donchian_xrp") runs, and/or its params, per-trade risk cap and
+        on/off switch — the self-service version of what used to require a
+        config.yaml edit and a redeploy. Changing the strategy class itself
+        is blocked while its symbol(s) have an open position (same guard as
+        set_strategy); params, risk_pct and enabled only affect future
+        entries, so they're always safe to change live. A disabled slot
+        keeps its strategy and params but takes no new entries (an open
+        position still closes on its own exchange bracket)."""
         with self.lock:
             subs = list(self.s.strategy_params.get("subs") or [])
-            idx = next((i for i, s in enumerate(subs)
-                        if (s.get("tag") if isinstance(s, dict) else s) == tag), None)
+            idx = next((i for i, s in enumerate(subs) if self._sub_tag(s) == tag), None)
             if idx is None:
                 raise ValueError(f"unknown strategy slot: {tag}")
             sub = dict(subs[idx]) if isinstance(subs[idx], dict) else {"name": subs[idx]}
@@ -423,55 +453,36 @@ class Agent:
                 sub["name"] = name
                 sub["params"] = {}  # old strategy's params don't apply to the new one
 
+            if reset_params:
+                sub["params"] = {}
             if params is not None:
-                try:
-                    defaults = load_strategy(sub["name"], {}).params
-                except Exception as e:
-                    raise ValueError(f"cannot load strategy {sub['name']}: {e}")
-                bad = set(params) - set(defaults)
-                if bad:
-                    raise ValueError(f"unknown params for {sub['name']}: {sorted(bad)}")
-                cleaned = {}
-                for key, raw in params.items():
-                    default = defaults[key]
-                    if isinstance(default, bool):
-                        cleaned[key] = raw if isinstance(raw, bool) else \
-                            str(raw).strip().lower() in ("1", "true", "yes", "on")
-                    elif isinstance(default, (int, float)):
-                        try:
-                            num = float(raw)
-                        except (TypeError, ValueError):
-                            raise ValueError(f"invalid value for {key}")
-                        if not math.isfinite(num):
-                            raise ValueError(f"invalid value for {key}")
-                        cleaned[key] = int(num) if isinstance(default, int) else num
-                    else:
-                        cleaned[key] = raw
+                cleaned = self._clean_params(sub["name"], params)
                 sub["params"] = {**sub.get("params", {}), **cleaned}
+            if enabled is not None:
+                if _as_bool(enabled):
+                    sub.pop("enabled", None)
+                else:
+                    sub["enabled"] = False
+
+            pct = None
+            if risk_pct is not None:
+                pct = self._validate_risk_pct(risk_pct)
 
             subs[idx] = sub
             self.s.strategy_params = {**self.s.strategy_params, "subs": subs}
             for m in self.markets.values():
                 self._build_strategy(m)
             self._align_strategy_data()
+            if self.s.shadow_paper:
+                self._build_shadow_execution()
 
-            if risk_pct is not None:
-                try:
-                    pct = float(risk_pct)
-                except (TypeError, ValueError):
-                    raise ValueError("risk_pct must be a number")
-                if not math.isfinite(pct) or pct < 0.05 or pct > 5:
-                    raise ValueError("risk_pct must be between 0.05% and 5%")
+            if pct is not None:
                 caps = {**self.s.risk.strategy_risk_pct, tag: pct}
-                new_config = replace(self.s.risk, strategy_risk_pct=caps,
-                                      risk_per_trade_pct=max(caps.values()))
-                self.s.risk = new_config
-                self.risk.cfg = new_config
-                self.shadow_risk.cfg = new_config
-                for lane in self.strategy_lanes.values():
-                    lane.risk.cfg = new_config
+                self._apply_risk_config(replace(self.s.risk, strategy_risk_pct=caps,
+                                                risk_per_trade_pct=max(caps.values())))
 
-            self._feed("strategy", f"{tag} -> {sub['name']} {sub.get('params') or ''}".strip())
+            state_note = "" if sub.get("enabled", True) is not False else " [disabled]"
+            self._feed("strategy", f"{tag} -> {sub['name']}{state_note} {sub.get('params') or ''}".strip())
             return sub
 
     def apply_strategy_subs(self, subs: list):
@@ -483,6 +494,383 @@ class Agent:
             for m in self.markets.values():
                 self._build_strategy(m)
             self._align_strategy_data()
+
+    # ── control plane: everything the dashboard can change ──
+    ENGINE_LIMITS = {"poll_seconds": (5, 3600), "lookback": (50, 5000)}
+    RISK_LIMITS = {
+        # field: (low, high, type) — the dashboard renders its inputs from this
+        "account_equity": (10, 1_000_000_000, float),
+        "stop_loss_pct": (0.05, 50, float),
+        "take_profit_pct": (0.05, 500, float),
+        "min_reward_risk": (0.1, 50, float),
+        "max_stop_distance_pct": (0.1, 50, float),
+        "max_leverage": (1, 1_000_000, int),
+        "max_daily_loss_pct": (0.1, 99.9, float),
+        "max_portfolio_risk_pct": (0.1, 99.9, float),
+        "max_open_positions": (1, 1_000_000, int),
+        "max_same_direction_positions": (1, 1_000_000, int),
+        "max_consecutive_losses": (1, 1_000_000, int),
+        "strategy_cooldown_minutes": (1, 1_000_000, int),
+    }
+    SLOT_RISK_RANGE = (0.05, 5.0)
+    _SYMBOL_RE = re.compile(r"^[A-Z0-9]{2,24}$")
+
+    @staticmethod
+    def _sub_tag(sub) -> str:
+        return sub.get("tag", sub.get("name")) if isinstance(sub, dict) else sub
+
+    def _subs(self) -> list:
+        return list(self.s.strategy_params.get("subs") or [])
+
+    def _slot_tags(self) -> set:
+        return {self._sub_tag(s) for s in self._subs()}
+
+    def _apply_risk_config(self, new_config: RiskConfig, note: str | None = None):
+        with self.lock:
+            self.s.risk = new_config
+            self.risk.cfg = new_config
+            self.shadow_risk.cfg = new_config
+            for lane in self.strategy_lanes.values():
+                lane.risk.cfg = new_config
+            if note:
+                self._feed("risk", note)
+
+    def _validate_risk_pct(self, raw) -> float:
+        low, high = self.SLOT_RISK_RANGE
+        try:
+            pct = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError("risk_pct must be a number")
+        if isinstance(raw, bool) or not math.isfinite(pct) or pct < low or pct > high:
+            raise ValueError(f"risk_pct must be between {low}% and {high:g}%")
+        return pct
+
+    @staticmethod
+    def _clean_params(strategy: str, params: dict) -> dict:
+        """Validate dashboard-supplied params against the strategy's own
+        defaults: unknown names are rejected and values are coerced to the
+        default's type."""
+        if not isinstance(params, dict):
+            raise ValueError("params must be a mapping")
+        try:
+            defaults = strategy_meta(strategy)["defaults"]
+        except Exception as e:
+            raise ValueError(f"cannot load strategy {strategy}: {e}")
+        bad = set(params) - set(defaults)
+        if bad:
+            raise ValueError(f"unknown params for {strategy}: {sorted(bad)}")
+        cleaned = {}
+        for key, raw in params.items():
+            default = defaults[key]
+            if isinstance(default, bool):
+                cleaned[key] = _as_bool(raw)
+            elif isinstance(default, (int, float)):
+                try:
+                    num = float(raw)
+                except (TypeError, ValueError):
+                    raise ValueError(f"invalid value for {key}")
+                if isinstance(raw, bool) or not math.isfinite(num):
+                    raise ValueError(f"invalid value for {key}")
+                if isinstance(default, int) and not num.is_integer():
+                    raise ValueError(f"{key} must be a whole number")
+                cleaned[key] = int(num) if isinstance(default, int) else num
+            else:
+                cleaned[key] = raw
+        return cleaned
+
+    def engine_settings(self) -> dict:
+        return {"poll_seconds": self.s.poll_seconds, "lookback": self.s.lookback,
+                "resolution": self.s.resolution, "ai_narrate": bool(self.s.ai_narrate)}
+
+    def update_engine(self, values: dict) -> dict:
+        """Loop interval, candle lookback, base timeframe and AI narration."""
+        if not isinstance(values, dict):
+            raise ValueError("expected an object")
+        updates = {}
+        for key, (low, high) in self.ENGINE_LIMITS.items():
+            raw = values.get(key)
+            if raw is None:
+                continue
+            try:
+                num = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"{key} must be a whole number between {low} and {high}")
+            if isinstance(raw, bool) or not math.isfinite(num) or not num.is_integer() or not low <= num <= high:
+                raise ValueError(f"{key} must be a whole number between {low} and {high}")
+            updates[key] = int(num)
+        if values.get("resolution") is not None:
+            res = str(values["resolution"])
+            if res not in _RES_SECONDS:
+                raise ValueError(f"unknown timeframe: {res}")
+            updates["resolution"] = res
+        if values.get("ai_narrate") is not None:
+            updates["ai_narrate"] = _as_bool(values["ai_narrate"])
+        with self.lock:
+            for key, value in updates.items():
+                setattr(self.s, key, value)
+            self._align_strategy_data()
+            self._lane_candle_cache = {}
+            if updates:
+                self._feed("mode", "engine settings updated: " +
+                           ", ".join(f"{k}={v}" for k, v in updates.items()))
+        return self.engine_settings()
+
+    def risk_settings(self) -> dict:
+        r = self.s.risk
+        out = {name: getattr(r, name) for name in self.RISK_LIMITS}
+        out["risk_per_trade_pct"] = r.risk_per_trade_pct
+        out["strategy_risk_pct"] = dict(r.strategy_risk_pct)
+        return out
+
+    def update_risk_settings(self, values: dict, *, strict: bool = True) -> RiskConfig:
+        """Partial update of ANY risk field (the older update_risk_controls
+        needs the full editable set). strict=False is for restoring a saved
+        override at boot: risk caps for slots that no longer exist are
+        dropped instead of failing the whole restore."""
+        if not isinstance(values, dict):
+            raise ValueError("expected an object")
+        updates = {}
+        for name, (low, high, cast) in self.RISK_LIMITS.items():
+            raw = values.get(name)
+            if raw is None:
+                continue
+            kind = "a whole number " if cast is int else ""
+            try:
+                num = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"{name} must be {kind}between {low:g} and {high:g}")
+            if (isinstance(raw, bool) or not math.isfinite(num) or num < low or num > high
+                    or (cast is int and not num.is_integer())):
+                raise ValueError(f"{name} must be {kind}between {low:g} and {high:g}")
+            updates[name] = cast(num)
+        caps = dict(self.s.risk.strategy_risk_pct)
+        raw_caps = values.get("strategy_risk_pct")
+        if raw_caps is not None:
+            if not isinstance(raw_caps, dict):
+                raise ValueError("strategy_risk_pct must be a mapping")
+            known = self._slot_tags() | set(caps)
+            for tag, raw in raw_caps.items():
+                if tag not in known:
+                    if strict:
+                        raise ValueError(f"unknown strategy slot: {tag}")
+                    continue
+                try:
+                    caps[tag] = self._validate_risk_pct(raw)
+                except ValueError:
+                    if strict:
+                        raise ValueError(f"{tag} risk must be between "
+                                         f"{self.SLOT_RISK_RANGE[0]}% and {self.SLOT_RISK_RANGE[1]:g}%")
+        if caps:
+            updates["strategy_risk_pct"] = caps
+            updates["risk_per_trade_pct"] = max(caps.values())
+        total = updates.get("max_open_positions", self.s.risk.max_open_positions)
+        same = updates.get("max_same_direction_positions", self.s.risk.max_same_direction_positions)
+        if same > total:
+            raise ValueError("same-direction positions cannot exceed total position slots")
+        new_config = replace(self.s.risk, **updates)  # RiskConfig re-validates
+        self._apply_risk_config(new_config, "risk controls updated")
+        return new_config
+
+    def slots(self) -> list[dict]:
+        """Per-coin strategy assignments in a UI-friendly shape."""
+        out = []
+        for sub in self._subs():
+            if not isinstance(sub, dict):
+                sub = {"name": sub, "tag": sub}
+            tag = self._sub_tag(sub)
+            try:
+                meta = strategy_meta(sub["name"])
+            except Exception:
+                meta = {"defaults": {}, "resolution": None}
+            params = dict(sub.get("params") or {})
+            out.append({
+                "tag": tag, "name": sub["name"],
+                "symbols": list(sub.get("symbols") or self.markets),
+                "params": params,
+                "effective_params": {**meta["defaults"], **params},
+                "enabled": sub.get("enabled", True) is not False,
+                "risk_pct": self.s.risk.risk_for(tag),
+                "resolution": meta.get("resolution"),
+            })
+        return out
+
+    def slot_for_symbol(self, symbol: str) -> dict | None:
+        """The slot dedicated to exactly this symbol, else the first listing it."""
+        slots = self.slots()
+        return (next((s for s in slots if s["symbols"] == [symbol]), None)
+                or next((s for s in slots if symbol in s["symbols"]), None))
+
+    def add_market(self, symbol: str, *, strategy: str = "paused", params: dict | None = None,
+                   risk_pct: float | None = None, tag: str | None = None) -> dict:
+        """Start trading a new Delta perpetual with its own strategy slot."""
+        symbol = str(symbol or "").strip().upper()
+        if not self._SYMBOL_RE.match(symbol):
+            raise ValueError("symbol must be 2-24 letters or digits, e.g. LTCUSD")
+        if self.s.strategy_name != "combo":
+            raise ValueError("adding markets needs the per-coin (combo) strategy setup")
+        if strategy == "combo" or strategy not in available_strategies():
+            raise ValueError(f"unknown strategy: {strategy}")
+        cleaned = self._clean_params(strategy, params or {})
+        pct = self._validate_risk_pct(0.25 if risk_pct is None else risk_pct)
+        with self.lock:
+            if symbol in self.markets:
+                raise ValueError(f"{symbol} is already trading")
+        # Exchange lookups happen outside the lock (the trading loop holds it
+        # for a whole cycle).
+        try:
+            product = self.client.get_product(symbol)
+            contract_value = float(product.get("contract_value") or 0)
+        except Exception as e:
+            raise ValueError(f"{symbol} was not found on the exchange ({str(e)[:120]})")
+        if not math.isfinite(contract_value) or contract_value <= 0:
+            raise ValueError(f"{symbol} has no usable contract specification")
+        kind = product.get("contract_type")
+        if kind and kind != "perpetual_futures":
+            raise ValueError(f"{symbol} is a {kind} contract; only perpetual futures are supported")
+        market = Market(symbol)
+        self._build_broker(market)
+        with self.lock:
+            if symbol in self.markets:
+                raise ValueError(f"{symbol} is already trading")
+            base = re.sub(r"USDT?$", "", symbol).lower() or symbol.lower()
+            wanted = re.sub(r"[^a-z0-9_]", "_", (tag or f"{strategy.split('_')[0]}_{base}").lower()).strip("_")
+            taken = self._slot_tags() | set(self.s.risk.strategy_risk_pct)
+            unique, n = wanted or base, 2
+            while unique in taken:
+                unique, n = f"{wanted}_{n}", n + 1
+            sub = {"name": strategy, "tag": unique, "symbols": [symbol], "params": cleaned}
+            self.s.strategy_params = {**self.s.strategy_params, "subs": self._subs() + [sub]}
+            self.s.symbols = list(self.s.symbols) + [symbol]
+            # Replace (never mutate) the dict: other threads may be iterating it.
+            self.markets = {**self.markets, symbol: market}
+            for m in self.markets.values():
+                self._build_strategy(m)
+            self._align_strategy_data()
+            caps = {**self.s.risk.strategy_risk_pct, unique: pct}
+            self._apply_risk_config(replace(self.s.risk, strategy_risk_pct=caps,
+                                            risk_per_trade_pct=max(caps.values())))
+            if self.s.shadow_paper:
+                self._build_shadow_execution()
+            self._feed("mode", f"market added: {symbol} -> {strategy} ({unique})")
+            return sub
+
+    def remove_market(self, symbol: str) -> dict:
+        """Stop trading a symbol. Refused while anything is open on it."""
+        symbol = str(symbol or "").strip().upper()
+        with self.lock:
+            m = self.markets.get(symbol)
+            if m is None:
+                raise ValueError(f"{symbol} is not trading")
+            if len(self.markets) <= 1:
+                raise ValueError("at least one market must remain")
+            if m.broker.position is not None or m.open_trade:
+                raise ValueError(f"close the open {symbol} position first")
+            if self.s.mode == "DELTA_DEMO":
+                if self._acct["status"] != "live":
+                    raise ValueError("Delta account unavailable; cannot verify there is no exchange position")
+                if any(p.get("symbol") == symbol for p in self._acct["positions"]):
+                    raise ValueError(f"Delta still reports an open {symbol} position")
+            subs, removed = [], []
+            for sub in self._subs():
+                listed = sub.get("symbols") if isinstance(sub, dict) else None
+                if listed and symbol in listed:
+                    rest = [x for x in listed if x != symbol]
+                    if rest:
+                        subs.append({**sub, "symbols": rest})
+                    else:
+                        removed.append(self._sub_tag(sub))
+                else:
+                    subs.append(sub)
+            if self.s.strategy_name == "combo" and not subs:
+                raise ValueError("cannot remove the last strategy slot")
+            self.markets = {k: v for k, v in self.markets.items() if k != symbol}
+            self.s.symbols = [x for x in self.s.symbols if x != symbol]
+            if self.s.strategy_name == "combo":
+                self.s.strategy_params = {**self.s.strategy_params, "subs": subs}
+            for mk in self.markets.values():
+                self._build_strategy(mk)
+            self._align_strategy_data()
+            remaining = {self._sub_tag(x) for x in subs}
+            caps = {t: v for t, v in self.s.risk.strategy_risk_pct.items()
+                    if t not in removed or t in remaining}
+            if caps != self.s.risk.strategy_risk_pct:
+                self._apply_risk_config(replace(
+                    self.s.risk, strategy_risk_pct=caps,
+                    risk_per_trade_pct=max(caps.values()) if caps else self.s.risk.risk_per_trade_pct))
+            self.shadow_markets.pop(symbol, None)
+            if self.s.shadow_paper:
+                self._build_shadow_execution()
+            self._feed("mode", f"market removed: {symbol}")
+            return {"symbol": symbol, "removed_slots": removed}
+
+    def manual_entry(self, symbol: str, side: str, *, risk_pct=None, sl_pct=None, tp_pct=None) -> Outcome:
+        """Open a position by hand from the dashboard: market order, sized by
+        the risk engine like any strategy entry, always with a stop-loss and
+        take-profit, and subject to every portfolio limit. Attributed to the
+        "manual" strategy so it never pollutes a coin's strategy stats."""
+        side = str(side or "").lower()
+        if side not in ("long", "short"):
+            raise ValueError("side must be long or short")
+        r = self.s.risk
+
+        def pct(name, raw, default, low, high):
+            if raw is None or raw == "":
+                return float(default)
+            try:
+                value = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"{name} must be a number")
+            if isinstance(raw, bool) or not math.isfinite(value) or not low <= value <= high:
+                raise ValueError(f"{name} must be between {low:g} and {high:g}")
+            return value
+
+        risk = pct("risk_pct", risk_pct, r.risk_per_trade_pct, *self.SLOT_RISK_RANGE)
+        if risk > r.risk_per_trade_pct + 1e-9:
+            # The risk engine rejects anything above the account's per-trade
+            # ceiling (the largest per-coin risk cap); say so up front.
+            raise ValueError(f"risk_pct can't exceed the per-trade ceiling of {r.risk_per_trade_pct:g}% "
+                             f"(raise a coin's risk on the Risk page to lift it)")
+        stop = pct("sl_pct", sl_pct, r.stop_loss_pct, 0.05, r.max_stop_distance_pct)
+        target = pct("tp_pct", tp_pct, r.take_profit_pct, 0.05, 500)
+        with self.lock:
+            m = self._market(symbol)
+            if m.broker.position is not None:
+                return Outcome("reject", "position already open")
+            if not m.last_candles:
+                return Outcome("reject", "no market data yet; wait for the next cycle")
+            issue = self._data_issue(m)
+            if issue:
+                return Outcome("reject", issue)
+            price = float(m.last_candles[-1]["close"])
+            if self.s.mode == "DELTA_DEMO":
+                self._refresh_account(force=True)
+            direction = 1 if side == "long" else -1
+            sig = Signal(Action.ENTER_LONG if side == "long" else Action.ENTER_SHORT,
+                         reason=f"manual {side} from dashboard (SL {stop:g}% / TP {target:g}%)",
+                         stop_loss=price * (1 - direction * stop / 100),
+                         take_profit=price * (1 + direction * target / 100),
+                         strategy="manual")
+            return self._open_from_signal(m, sig, price, risk_pct=risk, manual=True)
+
+    def close_all(self) -> dict:
+        """Market-close every open position (the dashboard's flatten button)."""
+        results = {}
+        with self.lock:
+            for sym, m in list(self.markets.items()):
+                if m.broker.position is not None:
+                    out = self.force_close(sym)
+                    results[sym] = {"event": out.event, "detail": out.detail}
+        return results
+
+    def reset_paper_equity(self) -> float:
+        with self.lock:
+            if self.s.mode != "PAPER":
+                raise ValueError("only the paper account balance can be reset")
+            if any(m.broker.position for m in self.markets.values()):
+                raise ValueError("close paper positions before resetting the balance")
+            self._reseed_equity(self.s.risk.account_equity)
+            self._feed("mode", f"paper balance reset to {self.s.risk.account_equity:.2f}")
+            return self.risk.equity
 
     _BAL_TTL = 20  # seconds between live account polls
     _ACCOUNT_MAX_BACKOFF = 300
@@ -684,6 +1072,8 @@ class Agent:
             "reason": self._classify_exit(reason),
             "win": pnl >= 0,
             "duration_s": self._dur_s(e.get("entry_ts"), exit_ts),
+            "entry_note": (e.get("reason") or "")[:300],
+            "exit_note": (reason or "")[:300],
         }
 
     def _load_trades_from_log(self):
@@ -694,7 +1084,11 @@ class Agent:
         falls back to the local CSV. Best-effort; skips malformed rows and
         rows from a log written before the symbol column existed (they load
         with symbol '—')."""
-        rows = db.load_trades()
+        # A replay/backtest agent shares symbol names with the live bot; it
+        # must never seed itself from the live Mongo trade log.
+        replay = bool(getattr(self.client, "offline_replay", False))
+        with (db.offline() if replay else nullcontext()):
+            rows = db.load_trades()
         if rows is None:
             path = self.s.trade_log
             if not os.path.exists(path):
@@ -717,6 +1111,7 @@ class Agent:
                         "sl": float(row["sl"]) if row.get("sl") else None,
                         "tp": float(row["tp"]) if row.get("tp") else None,
                         "strategy": row.get("strategy") or "—",
+                        "reason": row.get("reason") or "",
                     }
                 elif ev == "EXIT" and sym in pending:
                     self.trades.append(self._mk_trade(
@@ -966,21 +1361,33 @@ class Agent:
     # internal methods the dashboard's own buttons call — the model never
     # executes anything itself, it only ever picks a name from this list.
     JARVIS_ACTIONS = (
-        "close_position", "set_mode", "set_auto", "pause_entries",
-        "set_strategy_risk_pct", "start_bot", "stop_bot",
+        "close_position", "close_all_positions", "set_mode", "set_auto",
+        "pause_entries", "set_strategy_risk_pct", "set_coin_strategy",
+        "set_coin_params", "set_coin_enabled", "set_coin_risk", "set_risk_limit",
+        "set_engine", "add_market", "remove_market", "start_bot", "stop_bot",
     )
 
     def jarvis_status_summary(self) -> str:
         with self.lock:
             lines = [f"mode={self.s.mode} auto={self.auto} "
-                     f"entries_paused={self.entries_paused} equity={self.risk.equity:.2f}"]
+                     f"entries_paused={self.entries_paused} equity={self.risk.equity:.2f}",
+                     f"engine: poll_seconds={self.s.poll_seconds} lookback={self.s.lookback} "
+                     f"base_timeframe={self.s.resolution} ai_narrate={self.s.ai_narrate}"]
+            slots = {sym: self.slot_for_symbol(sym) for sym in self.markets}
             for sym, m in self.markets.items():
                 pos = m.broker.position
-                tag = m.strategy.__class__.__module__.rsplit(".", 1)[-1]
-                if pos:
-                    lines.append(f"{sym} [{tag}]: {pos.side} {pos.size} @ {pos.entry}")
+                slot = slots.get(sym)
+                if slot:
+                    changed = {k: v for k, v in slot["params"].items()}
+                    desc = (f"slot={slot['tag']} strategy={slot['name']} "
+                            f"{'ENABLED' if slot['enabled'] else 'DISABLED'} risk={slot['risk_pct']}% "
+                            f"params={changed or 'defaults'}")
                 else:
-                    lines.append(f"{sym} [{tag}]: flat")
+                    desc = f"strategy={self.s.strategy_name}"
+                state_txt = f"{pos.side} {pos.size} @ {pos.entry} SL {pos.stop_loss} TP {pos.take_profit}" if pos else "flat"
+                lines.append(f"{sym}: {desc}; position: {state_txt}")
+            r = self.s.risk
+            lines.append("risk limits: " + ", ".join(f"{k}={getattr(r, k)}" for k in self.RISK_LIMITS))
             a = self._analytics()
             if a["trades"]:
                 lines.append(
@@ -1016,45 +1423,71 @@ class Agent:
         if not ai.available():
             return {"reply": "AI isn't configured (set OPENROUTER_API_KEY).", "action": None}
         symbols = list(self.markets)
-        strategies = sorted(self.s.risk.strategy_risk_pct)
+        tags = sorted(self.s.risk.strategy_risk_pct)
+        catalog = [n for n in available_strategies() if n != "combo"]
+        param_help = {}
+        for slot in self.slots():
+            param_help.setdefault(slot["name"], sorted(slot["effective_params"]))
         system = (
-            "You are the voice/chat assistant embedded in TradeOS, a live crypto "
+            "You are Jarvis, the voice/chat assistant embedded in TradeOS, a live crypto "
             "trading bot dashboard. Answer questions about current status directly "
             "and concisely (2-3 sentences, spoken-style, no markdown). If the user "
             "asks you to CHANGE something, reply with a short confirmation-style "
             "sentence describing exactly what you are about to do, and set the "
             "action field — never claim to have done it yet, since it has not "
-            "happened until the user confirms.\n\n"
-            "The status block below already includes the FULL closed-trade "
-            "history: win/loss counts, win rate, total P&L, avg win/loss, "
-            "profit factor, and a breakdown per strategy and per symbol. "
-            "Answer win-rate, trade-count, and performance questions directly "
-            "from those numbers — never say you lack access to trade history.\n\n"
+            "happened until the user confirms. One action per reply.\n\n"
+            "The status block below includes every coin's strategy slot, its "
+            "params, the risk limits, and the FULL closed-trade history (win/loss "
+            "counts, win rate, total P&L, profit factor, per strategy and per "
+            "symbol). Answer from those numbers — never say you lack access.\n\n"
             f"Valid symbols: {symbols}\n"
-            f"Valid strategy names: {strategies}\n"
+            f"Valid strategy slot tags: {tags}\n"
+            f"Installed strategies: {catalog}\n"
+            f"Param names by strategy in use: {param_help}\n"
+            f"Risk limit fields: {sorted(self.RISK_LIMITS)}\n"
             "Valid action names and their args (omit args that don't apply):\n"
             '  close_position {"symbol": one of the valid symbols}\n'
+            '  close_all_positions {}\n'
             '  set_mode {"mode": "PAPER" or "DELTA_DEMO"}\n'
             '  set_auto {"enabled": true or false}\n'
             '  pause_entries {"paused": true or false}\n'
-            '  set_strategy_risk_pct {"strategy": one of the valid strategy names, '
-            '"risk_pct": a number between 0.05 and 5}\n'
+            '  set_coin_strategy {"symbol": ..., "strategy": an installed strategy}\n'
+            '  set_coin_params {"symbol": ..., "params": {"param_name": value}}\n'
+            '  set_coin_enabled {"symbol": ..., "enabled": true or false}\n'
+            '  set_coin_risk {"symbol": ..., "risk_pct": number 0.05-5}\n'
+            '  set_strategy_risk_pct {"strategy": a slot tag, "risk_pct": number 0.05-5}\n'
+            '  set_risk_limit {"field": a risk limit field, "value": number}\n'
+            '  set_engine {"poll_seconds"?: int, "lookback"?: int, "resolution"?: timeframe, "ai_narrate"?: bool}\n'
+            '  add_market {"symbol": e.g. "LTCUSD", "strategy"?: installed strategy, "risk_pct"?: number}\n'
+            '  remove_market {"symbol": ...}\n'
             '  start_bot {}\n'
             '  stop_bot {}\n'
-            "If the request doesn't match a real action, or is missing required "
-            "info (e.g. which symbol), ask a short clarifying question instead "
-            "and set action to null.\n"
+            "Words like 'take profit 8x' or 'TP multiple' on Donchian mean the "
+            "fallback_tp_mult param. If the request doesn't match a real action, "
+            "or is missing required info (e.g. which symbol), ask a short "
+            "clarifying question instead and set action to null.\n"
             'Reply with JSON: {"reply": "...", "action": null or '
             '{"name": "...", "args": {...}}}'
         )
         prompt = f"Current status:\n{self.jarvis_status_summary()}\n\nUser said: {text}"
-        result = ai.ask_json(prompt, system=system, max_tokens=600)
+        result = ai.ask_json(prompt, system=system, max_tokens=700)
         if not result or "reply" not in result:
             return {"reply": "I didn't catch that clearly — can you repeat it?", "action": None}
         action = result.get("action")
         if isinstance(action, dict) and action.get("name") not in self.JARVIS_ACTIONS:
             action = None
         return {"reply": str(result["reply"])[:500], "action": action}
+
+    def _dedicated_slot(self, symbol) -> dict:
+        if symbol not in self.markets:
+            raise ValueError(f"unknown symbol: {symbol}")
+        slot = self.slot_for_symbol(symbol)
+        if slot is None:
+            raise ValueError(f"{symbol} has no strategy slot")
+        if slot["symbols"] != [symbol]:
+            raise ValueError(f"{symbol}'s slot {slot['tag']} is shared with "
+                             f"{', '.join(s for s in slot['symbols'] if s != symbol)}; edit it on the Strategies page")
+        return slot
 
     def jarvis_execute(self, name: str, args: dict) -> dict:
         """Actually perform a JARVIS_ACTIONS action. Called only after the
@@ -1066,33 +1499,55 @@ class Agent:
                 raise ValueError(f"unknown symbol: {symbol}")
             out = self.force_close(symbol)
             return {"event": out.event, "detail": out.detail}
+        if name == "close_all_positions":
+            return {"closed": self.close_all()}
         if name == "set_mode":
             self.set_mode(str(args.get("mode", "")).upper())
             return {"mode": self.s.mode}
         if name == "set_auto":
-            self.set_auto(bool(args.get("enabled")))
+            self.set_auto(_as_bool(args.get("enabled")))
             return {"auto": self.auto}
         if name == "pause_entries":
-            self.pause_entries(bool(args.get("paused")))
+            self.pause_entries(_as_bool(args.get("paused")))
             return {"entries_paused": self.entries_paused}
         if name == "set_strategy_risk_pct":
             strategy = args.get("strategy")
             if strategy not in self.s.risk.strategy_risk_pct:
                 raise ValueError(f"unknown strategy: {strategy}")
-            risk_pct = float(args.get("risk_pct"))
-            if not (0.05 <= risk_pct <= 5):
-                raise ValueError("risk_pct must be between 0.05 and 5")
-            with self.lock:
-                merged = {
-                    "max_portfolio_risk_pct": self.s.risk.max_portfolio_risk_pct,
-                    "max_open_positions": self.s.risk.max_open_positions,
-                    "max_same_direction_positions": self.s.risk.max_same_direction_positions,
-                    "max_leverage": self.s.risk.max_leverage,
-                    "max_daily_loss_pct": self.s.risk.max_daily_loss_pct,
-                    "strategy_risk_pct": {**self.s.risk.strategy_risk_pct, strategy: risk_pct},
-                }
-            self.update_risk_controls(merged)
+            risk_pct = self._validate_risk_pct(args.get("risk_pct"))
+            self.update_risk_settings({"strategy_risk_pct": {strategy: risk_pct}})
             return {"strategy": strategy, "risk_pct": risk_pct}
+        if name == "set_coin_strategy":
+            slot = self._dedicated_slot(args.get("symbol"))
+            sub = self.update_sub(slot["tag"], name=str(args.get("strategy") or ""),
+                                  params=args.get("params") or None)
+            return {"symbol": args.get("symbol"), "slot": sub}
+        if name == "set_coin_params":
+            slot = self._dedicated_slot(args.get("symbol"))
+            if not isinstance(args.get("params"), dict) or not args["params"]:
+                raise ValueError("no params given")
+            return {"symbol": args.get("symbol"), "slot": self.update_sub(slot["tag"], params=args["params"])}
+        if name == "set_coin_enabled":
+            slot = self._dedicated_slot(args.get("symbol"))
+            return {"symbol": args.get("symbol"),
+                    "slot": self.update_sub(slot["tag"], enabled=_as_bool(args.get("enabled")))}
+        if name == "set_coin_risk":
+            slot = self._dedicated_slot(args.get("symbol"))
+            self.update_sub(slot["tag"], risk_pct=args.get("risk_pct"))
+            return {"symbol": args.get("symbol"), "risk_pct": self.s.risk.risk_for(slot["tag"])}
+        if name == "set_risk_limit":
+            field = args.get("field")
+            if field not in self.RISK_LIMITS:
+                raise ValueError(f"unknown risk field: {field}")
+            self.update_risk_settings({field: args.get("value")})
+            return {field: getattr(self.s.risk, field)}
+        if name == "set_engine":
+            return self.update_engine({k: args.get(k) for k in ("poll_seconds", "lookback", "resolution", "ai_narrate")})
+        if name == "add_market":
+            return self.add_market(args.get("symbol"), strategy=args.get("strategy") or "paused",
+                                   risk_pct=args.get("risk_pct"))
+        if name == "remove_market":
+            return self.remove_market(args.get("symbol"))
         if name in ("start_bot", "stop_bot"):
             # the runner lives in server.py, not here — the route handles it
             return {"ok": True}
@@ -1466,7 +1921,8 @@ class Agent:
             return self._do_exit(m, price, "manual close")
 
     # ── internal execution ──
-    def _open_from_signal(self, m: Market, sig: Signal, price: float) -> Outcome:
+    def _open_from_signal(self, m: Market, sig: Signal, price: float, *,
+                          risk_pct: float | None = None, manual: bool = False) -> Outcome:
         if not self.execution_enabled:
             return Outcome("reject", self.execution_reason or "read-only standby instance")
         if self.entries_paused:
@@ -1480,7 +1936,7 @@ class Agent:
             return Outcome("reject", "position already open")
         stamp = m.last_candles[-1].get("time") if m.last_candles else None
         rejection_key = (stamp, sig.action.value)
-        if m.last_rejected_entry and m.last_rejected_entry[:2] == rejection_key:
+        if not manual and m.last_rejected_entry and m.last_rejected_entry[:2] == rejection_key:
             return Outcome("hold", f"entry rejected earlier this candle: {m.last_rejected_entry[2]}")
         if stamp is not None and stamp == m.last_entry_candle:
             return Outcome("reject", "already entered on this candle")
@@ -1494,7 +1950,7 @@ class Agent:
         portfolio = self._portfolio()
         side = "long" if sig.action == Action.ENTER_LONG else "short"
         strat = sig.strategy or self.s.strategy_name
-        allowed, guard_reason = self._strategy_guard(strat)
+        allowed, guard_reason = (True, "") if manual else self._strategy_guard(strat)
         if not allowed:
             m.last_rejected_entry = rejection_key + (guard_reason,)
             self._feed("risk", f"[{m.symbol}] {guard_reason}")
@@ -1509,9 +1965,10 @@ class Agent:
                                        open_notional=portfolio["notional"], open_risk=portfolio["stop_risk"],
                                        open_positions=portfolio["positions"],
                                        same_direction_positions=same_direction,
-                                       risk_pct=self.s.risk.risk_for(strat))
+                                       risk_pct=risk_pct if risk_pct is not None else self.s.risk.risk_for(strat))
         if not plan.ok:
-            m.last_rejected_entry = rejection_key + (plan.reject_reason,)
+            if not manual:
+                m.last_rejected_entry = rejection_key + (plan.reject_reason,)
             self._feed("reject", f"[{m.symbol}] {plan.reject_reason}")
             self.tlog.write("REJECT", side=side, price=_price_str(price),
                             reason=plan.reject_reason, equity=f"{self.risk.equity:.2f}",
@@ -1523,7 +1980,7 @@ class Agent:
         m.open_trade = {
             "entry_ts": self._now(), "side": side, "entry": price,
             "size": plan.size_contracts, "sl": plan.stop_loss, "tp": plan.take_profit,
-            "strategy": strat, "contract_value": cv,
+            "strategy": strat, "contract_value": cv, "reason": sig.reason or "",
         }
         # Persist what WE intended as the bracket, independent of whether
         # Delta actually confirmed it — reconcile() falls back to this if
@@ -1614,17 +2071,19 @@ class Agent:
             return "exchange"
         return "local"
 
-    def _market_snapshot(self, m: Market) -> dict:
+    def _market_snapshot(self, m: Market, lite: bool = False) -> dict:
         candles = m.last_candles
         c = closes(candles) if candles else []
-        ef = ema(c, 9) if c else []
-        es = ema(c, 20) if c else []
-        et = ema(c, 200) if c else []
-        r = rsi(c, 14) if c else []
-        n = 120
+        # lite = the new dashboard's stream: it fetches full charts on demand
+        # (/api/chart), so skip the per-second indicator math entirely.
+        ef = ema(c, 9) if c and not lite else []
+        es = ema(c, 20) if c and not lite else []
+        et = ema(c, 200) if c and not lite else []
+        r = rsi(c, 14) if c and not lite else []
+        n = 0 if lite else 120
         chart = []
         start = max(0, len(candles) - n)
-        for i in range(start, len(candles)):
+        for i in range(start if n else len(candles), len(candles)):
             chart.append({
                 "t": candles[i].get("time"),
                 "o": float(candles[i]["open"]), "h": float(candles[i]["high"]),
@@ -1648,8 +2107,20 @@ class Agent:
         if is_demo and pos:
             match = next((p for p in self._acct["positions"] if p.get("symbol") == m.symbol), None)
             liq = match.get("liquidation") if match else None
+        step = _RES_SECONDS.get(self.s.resolution)
+        day_bars = int(86400 // step) if step else 0
+        change_24h = None
+        if day_bars and len(c) > day_bars and c[-1 - day_bars]:
+            change_24h = round((c[-1] / c[-1 - day_bars] - 1) * 100, 3)
+        last_bar = candles[-1] if candles else None
         return {
             "symbol": m.symbol,
+            "spark": [round(x, 8) for x in c[-72:]],
+            "change_24h": change_24h,
+            "candle": None if not last_bar else {
+                "t": last_bar.get("time"), "o": float(last_bar["open"]), "h": float(last_bar["high"]),
+                "l": float(last_bar["low"]), "c": float(last_bar["close"]),
+                "v": float(last_bar.get("volume") or 0)},
             "data_status": self._data_issue(m) or "fresh",
             "last_fetch": m.last_fetch or None,
             "decision": m.last_outcome.__dict__,
@@ -1674,7 +2145,7 @@ class Agent:
         }
 
     # ── state snapshot for UI ──
-    def snapshot(self) -> dict:
+    def snapshot(self, lite: bool = False) -> dict:
         with self.lock:
             can, why = self.risk.can_trade()
             is_demo = self.s.mode == "DELTA_DEMO"
@@ -1687,7 +2158,7 @@ class Agent:
             else:
                 equity = round(self.risk.equity, 2)
                 equity_status = "simulated"
-            markets = {sym: self._market_snapshot(m) for sym, m in self.markets.items()}
+            markets = {sym: self._market_snapshot(m, lite) for sym, m in self.markets.items()}
             portfolio = self._portfolio()
             portfolio["known"] = not is_demo or self._acct["status"] == "live"
             entry_blocks = []
@@ -1756,7 +2227,10 @@ class Agent:
                 "entry_risk_reason": "; ".join(entry_blocks),
                 "equity_curve": self.equity_curve[-200:],
                 "feed": self.recent[:30],
-                "trades": self.trades[-100:],
+                "trades": self.trades[-(30 if lite else 100):],
+                "trade_count": len(self.trades),
+                "slots": self.slots(),
+                "engine": self.engine_settings(),
                 "analytics": self._analytics(),
                 "risk": {
                     "risk_per_trade_pct": self.s.risk.risk_per_trade_pct,

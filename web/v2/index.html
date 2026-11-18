@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TradeOS</title>
+<meta name="description" content="TradeOS — live multi-coin trading workspace">
+<meta name="theme-color" content="#0a0b0e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TradeOS">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/v2/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/v2/icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/v2/app.css">
+<script>
+  // Apply the saved theme before first paint (no flash).
+  try {
+    var p = JSON.parse(localStorage.getItem("tradeos.v2.prefs") || "{}");
+    var t = p.theme || "dark";
+    if (t === "system") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    document.documentElement.dataset.theme = t;
+    if (p.density === "compact") document.documentElement.dataset.density = "compact";
+    if (p.accent) document.documentElement.style.setProperty("--accent-h", p.accent);
+  } catch (e) {}
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+<div id="app">
+  <div class="boot">
+    <div class="boot-mark"><svg viewBox="0 0 32 32" width="40" height="40" aria-hidden="true"><defs><linearGradient id="bg0" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8b7bff"/><stop offset="1" stop-color="#3fd6c3"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#bg0)"/><path d="M7 21l5.5-6 4.5 4 8-9" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+    <div class="boot-text">Loading TradeOS…</div>
+    <noscript>TradeOS needs JavaScript. <a href="/classic">Open the classic dashboard</a>.</noscript>
+  </div>
+</div>
+<script type="module" src="/static/v2/app.js"></script>
+<script>
+  // If the app module fails to load (offline CDN, old browser), offer the classic UI.
+  setTimeout(function () {
+    if (!window.__tradeosBooted) {
+      var el = document.querySelector(".boot-text");
+      if (el) el.innerHTML = 'Still loading… <a href="/classic">Open the classic dashboard</a> or <a href="">retry</a>.';
+    }
+  }, 9000);
+</script>
+</body>
+</html>

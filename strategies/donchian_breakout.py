@@ -1,6 +1,7 @@
 """Donchian channel breakout, with a volume filter, ADX trend filter, and a
-static ATR stop. The real exit is a trailing channel-cross, not a fixed
-take-profit — see `fallback_tp_mult` below.
+static ATR stop. Live, trades close on the exchange stop-loss/take-profit
+bracket (target = fallback_tp_mult x stop distance); the trailing
+channel-cross exit only applies where no exchange bracket is confirmed.
 
   - Entry channel = N-period Donchian high/low (default 20), using the prior
     N candles only (today's candle isn't part of its own channel).
@@ -14,10 +15,14 @@ take-profit — see `fallback_tp_mult` below.
   - Stop-loss = atr_stop_mult x ATR14 from entry, held static (not trailed —
     this is a trend-initiation system; a tight trailing stop would cut off
     the big winners it depends on).
-  - Take-profit is NOT the real exit (the trailing channel-cross above is);
-    it's set far away (fallback_tp_mult x stop distance) purely because the
-    risk engine requires a bracket. In practice price should almost never
-    reach it — the channel exit fires first.
+  - Take-profit = fallback_tp_mult x stop distance. NOTE (corrected
+    2026-11-15): this was written as a far-away fallback behind the channel
+    exit, but live the agent ignores a strategy EXIT once Delta confirms the
+    bracket ("exchange bracket owns the exit", core/agent.py) and this
+    strategy doesn't set exit_with_bracket — so live, the stop and this
+    take-profit are the ONLY exits and fallback_tp_mult is the real
+    reward:risk. Backtests honour the channel exit unless run with
+    bracket_owns_exit=True (the dashboard's backtest lab does by default).
 
 This is a trend-initiation system, complementary to an EMA pullback system:
 catches moves earlier but has a lower win rate (commonly 35-45%) and depends

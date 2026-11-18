@@ -9,6 +9,7 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager
 
 log = logging.getLogger("tradeos")
 
@@ -16,6 +17,35 @@ _lock = threading.Lock()
 _db = None
 _tried = False
 _last_attempt = 0.0
+_local = threading.local()
+
+
+@contextmanager
+def offline():
+    """Make every call in THIS thread a no-op, as if Mongo were not
+    configured. Backtests/replays run inside it: they share symbol names
+    with the live bot (e.g. "BTCUSD"), so without this a replay on a
+    developer machine whose .env points at the live cluster saved and
+    cleared the LIVE position-bracket documents on every simulated trade.
+    Thread-local, so the live trading thread is never affected."""
+    previous = getattr(_local, "offline", False)
+    _local.offline = True
+    try:
+        yield
+    finally:
+        _local.offline = previous
+
+
+def is_offline() -> bool:
+    return bool(getattr(_local, "offline", False))
+
+
+def _db():
+    """The live database handle, or None when unconfigured, unreachable,
+    or inside offline()."""
+    if is_offline():
+        return None
+    return _connect()
 
 
 def _connect():
@@ -49,7 +79,7 @@ def _connect():
 
 
 def available() -> bool:
-    return _connect() is not None
+    return _db() is not None
 
 
 def status() -> dict:
@@ -60,7 +90,7 @@ def status() -> dict:
 
 def insert_trade(row: dict):
     """Mirror one trade-log row (dict of TradeLog.FIELDS)."""
-    db = _connect()
+    db = _db()
     if db is None:
         return
     try:
@@ -76,7 +106,7 @@ def save_position_bracket(symbol: str, doc: dict):
     margin/liquidation bounds) with no further notice; reconcile() falls
     back to this so the position still gets local (software) protection
     instead of running naked, and so that protection survives a restart."""
-    db = _connect()
+    db = _db()
     if db is None:
         return
     try:
@@ -86,7 +116,7 @@ def save_position_bracket(symbol: str, doc: dict):
 
 
 def load_position_bracket(symbol: str) -> dict | None:
-    db = _connect()
+    db = _db()
     if db is None:
         return None
     try:
@@ -98,7 +128,7 @@ def load_position_bracket(symbol: str) -> dict | None:
 
 
 def clear_position_bracket(symbol: str):
-    db = _connect()
+    db = _db()
     if db is None:
         return
     try:
@@ -110,7 +140,7 @@ def clear_position_bracket(symbol: str):
 def load_trades() -> list[dict] | None:
     """All mirrored trade-log rows, oldest first. None if Mongo is unavailable
     (caller should fall back to the local CSV), [] if Mongo has no rows yet."""
-    db = _connect()
+    db = _db()
     if db is None:
         return None
     try:
@@ -123,7 +153,7 @@ def load_trades() -> list[dict] | None:
 def load_state() -> dict | None:
     """The current runtime-state document. None if Mongo is unavailable
     (caller should fall back to the local JSON file)."""
-    db = _connect()
+    db = _db()
     if db is None:
         return None
     try:
@@ -136,7 +166,7 @@ def load_state() -> dict | None:
 
 def save_state(doc: dict):
     """Upsert the single current runtime-state document."""
-    db = _connect()
+    db = _db()
     if db is None:
         return
     try:
@@ -146,7 +176,7 @@ def save_state(doc: dict):
 
 
 def delete_state_fields(*names: str):
-    db = _connect()
+    db = _db()
     if db is None or not names:
         return
     try:
@@ -159,7 +189,7 @@ def delete_state_fields(*names: str):
 
 def acquire_execution_lease(owner: str, ttl_seconds: int = 30) -> bool:
     """Atomically elect one DELTA_DEMO executor across all instances."""
-    db = _connect()
+    db = _db()
     if db is None:
         return False
     now = time.time()
@@ -183,10 +213,33 @@ def acquire_execution_lease(owner: str, ttl_seconds: int = 30) -> bool:
 
 
 def release_execution_lease(owner: str):
-    db = _connect()
+    db = _db()
     if db is None:
         return
     try:
         db.execution_lease.delete_one({"_id": "delta-demo", "owner": owner})
     except Exception as e:
         log.warning("execution lease release failed: %s", e)
+
+
+def insert_audit(entry: dict):
+    """Mirror one change-history entry (see core/audit.py)."""
+    db = _db()
+    if db is None:
+        return
+    try:
+        db.audit.insert_one(dict(entry))
+    except Exception as e:
+        log.warning("MongoDB audit insert failed: %s", e)
+
+
+def load_audit(limit: int = 200) -> list[dict] | None:
+    """Newest-first change history. None if Mongo is unavailable."""
+    db = _db()
+    if db is None:
+        return None
+    try:
+        return list(db.audit.find({}, {"_id": 0}).sort("ts", -1).limit(int(limit)))
+    except Exception as e:
+        log.warning("MongoDB audit load failed: %s", e)
+        return None

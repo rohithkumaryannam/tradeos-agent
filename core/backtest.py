@@ -1,6 +1,7 @@
 """Offline, single-instrument replay. Signals at close; fills next bar open."""
 import math
 
+from core import db
 from core.agent import _RES_SECONDS
 from strategies.base import Action
 
@@ -18,7 +19,27 @@ def validate_candles(candles, seconds):
         previous = stamp
 
 
-def simulate(agent, candles, warmup=30, fee_bps=5, slippage_bps=2):
+def simulate(agent, candles, warmup=30, fee_bps=5, slippage_bps=2, *,
+             bracket_owns_exit=False, progress=None):
+    """Replay `candles` through `agent` (see module docstring).
+
+    bracket_owns_exit=True reproduces live execution, where a confirmed
+    exchange bracket makes the agent ignore a strategy's own EXIT signal
+    unless that signal sets exit_with_bracket (core/agent.py), so only the
+    stop-loss / take-profit close trades. The default (False) keeps the
+    historical research behaviour of honouring every strategy exit.
+
+    progress, if given, is called as progress(done_bars, total_bars).
+
+    Always runs with the database switched off for this thread: replays use
+    real symbol names, and must never read or write the live bot's
+    position brackets, trade log or state."""
+    with db.offline():
+        return _simulate(agent, candles, warmup, fee_bps, slippage_bps,
+                         bracket_owns_exit, progress)
+
+
+def _simulate(agent, candles, warmup, fee_bps, slippage_bps, bracket_owns_exit, progress):
     # This marker is set only by run.ReplayClient, never a DeltaClient.
     if agent.s.mode != "PAPER" or not getattr(agent.client, "offline_replay", False):
         raise ValueError("backtest requires PAPER mode and an offline replay client")
@@ -77,13 +98,19 @@ def simulate(agent, candles, warmup=30, fee_bps=5, slippage_bps=2):
             equity -= (p.notional + p.notional / p.entry * price) * fee_bps / 10_000
         peak = max(peak, equity)
         max_drawdown = max(max_drawdown, (peak - equity) / peak * 100)
+        return equity
 
+    total = len(candles) - first
+    sample_every = max(1, total // 400)
+    report_every = max(1, total // 50)
+    samples = []
     for i in range(first, len(candles)):
         bar = candles[i]
         now[0] = float(bar["time"])
         # Pending signal was made using ONLY bars through i-1.
         if pending:
-            if pending.action == Action.EXIT and m.broker.position:
+            if (pending.action == Action.EXIT and m.broker.position
+                    and not (bracket_owns_exit and not getattr(pending, "exit_with_bracket", False))):
                 close(float(bar["open"]), pending.reason)
             elif pending.action in (Action.ENTER_LONG, Action.ENTER_SHORT) and not m.broker.position:
                 direction = 1 if pending.action == Action.ENTER_LONG else -1
@@ -104,7 +131,12 @@ def simulate(agent, candles, warmup=30, fee_bps=5, slippage_bps=2):
                 close(hit[1], hit[2])
         m.last_candles = candles[max(0, i + 1 - agent.s.lookback):i + 1]
         m.last_fetch = now[0]
-        mark(float(bar["close"]))
+        equity_now = mark(float(bar["close"]))
+        done = i - first + 1
+        if done % sample_every == 0 or done == total:
+            samples.append({"t": int(float(bar["time"])), "equity": round(equity_now, 4)})
+        if progress and (done % report_every == 0 or done == total):
+            progress(done, total)
         side = m.broker.position.side if m.broker.position else None
         pending = m.strategy.generate(m.last_candles, side)
 
@@ -125,5 +157,6 @@ def simulate(agent, candles, warmup=30, fee_bps=5, slippage_bps=2):
         "fee_bps_per_side": fee_bps, "slippage_bps_per_side": slippage_bps,
         "fees_paid": round(fees, 4), "slippage_cost": round(slippage, 4),
         "rejected_entries": rejected, "analytics": agent._analytics(),
+        "bracket_owns_exit": bool(bracket_owns_exit), "equity_samples": samples,
         "assumptions": "Closed-bar signals, next-open fills; adverse slippage on every fill; stop-first if both brackets touch; gap-through stops at open. Drawdown sampled at closes. Funding, liquidation and liquidity not modeled. Buy-and-hold is unlevered spot before costs, not a risk-matched benchmark. Research only, not proof of future profit.",
     }

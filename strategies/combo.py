@@ -69,6 +69,7 @@ class Strategy(BaseStrategy):
         # apply to that market. Filtering by `symbols` only affects which
         # subs actually trade below, not this metadata.
         all_subs = []
+        disabled = set()
         for spec in specs:
             if isinstance(spec, str):
                 sub_name, params, tag, symbols = spec, {}, spec, None
@@ -77,19 +78,30 @@ class Strategy(BaseStrategy):
                 params = spec.get("params") or {}
                 tag = spec.get("tag", sub_name)
                 symbols = spec.get("symbols")
+                # `enabled: false` (the dashboard's per-coin switch) keeps the
+                # slot's strategy + params but trades it as `paused`: no new
+                # entries, no early exits — an open position still closes on
+                # its own exchange bracket.
+                if spec.get("enabled", True) is False:
+                    disabled.add(tag)
             all_subs.append((tag, load_strategy(sub_name, params), symbols))
+
+        def active(tag, strat):
+            return load_strategy("paused", {}) if tag in disabled else strat
 
         # `symbols` on a sub spec dedicates it to specific market(s) — e.g.
         # giving ema_5m and ema_15m one symbol each so they never compete for
         # the same position and both genuinely get to trade, for a fair
         # comparison. A sub with no `symbols` restriction applies everywhere.
-        self.subs = [(tag, strat) for tag, strat, symbols in all_subs
+        self.subs = [(tag, active(tag, strat)) for tag, strat, symbols in all_subs
                      if not symbols or (_symbol and _symbol in symbols)]
         if not self.subs:
             # misconfigured (symbols excludes every market) — fail open
             # rather than silently trading nothing.
-            self.subs = [(tag, strat) for tag, strat, _ in all_subs]
+            self.subs = [(tag, active(tag, strat)) for tag, strat, _ in all_subs]
 
+        # Metadata comes from the real strategies (disabled ones included) so
+        # switching a coin off never changes the shared candle settings.
         self.closed_candles_only = any(getattr(s, "closed_candles_only", False) for _, s, _ in all_subs)
         # "base" = whichever closed-candle sub runs on the agent's own shared
         # candle feed (the first one, by convention/order); every other

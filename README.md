@@ -21,14 +21,42 @@ remain read-only. Set `TRADEOS_EXECUTION_ROLE=read_only` to force a monitor.
 
 ## Workspace
 
-- Account equity, realized daily P&L, unrealized P&L, and gross exposure.
-- Selectable markets with candlestick, EMA, RSI, position, and protection views.
-- Portfolio stop-risk and leverage utilization, position slots, daily loss budget.
-- Per-market candle freshness, latest decision, execution issues, and cycle timing.
-- Trade journal with market filters and CSV export of the displayed history
-  (up to 100 completed trades). Performance covers up to 500 completed trades.
-- Manual signal confirmation with expiration; visible errors for failed controls.
-- Optional Gemini commentary and analysis; AI does not place orders.
+The dashboard (`web/v2/`, plain ES modules: Preact + htm and TradingView
+Lightweight Charts from jsDelivr, no build step) controls everything the
+engine does. The previous UI stays available at `/classic`.
+
+- **Overview** — equity, today's P&L, open P&L, win rate, risk in use, live
+  market cards, realized P&L curve, positions and the event feed.
+- **Trade** — candlestick chart per coin with EMAs, the open position's
+  entry/stop/target lines and journal markers; a risk-sized manual order ticket
+  (always bracketed, journaled as `manual`); the coin's strategy controls.
+- **Positions** — open positions with protection status, Delta's resting
+  orders, account-wide exchange positions and reconciliation warnings.
+- **Strategies** — per-coin strategy, parameters, risk and on/off switch; add
+  or remove Delta perpetuals; strategy library.
+- **Risk** — every risk-engine limit, per-coin risk caps, live usage gauges.
+- **Backtest Lab** — replays a strategy on recent public Delta candles in a
+  low-priority child process (no credentials, database switched off);
+  "live-faithful" mode matches live bracket-only exits; one click applies the
+  tested settings to the coin.
+- **Journal / Analytics** — filterable, sortable trade history with notes and
+  CSV export; drawdown, daily P&L calendar, P&L by market, slot, hour, holding
+  time and R-multiple, plus automatic insights.
+- **Jarvis** — chat or voice; can change any setting listed above, always
+  after an explicit confirmation.
+- **Activity** — live engine events and the change history (`/api/audit`)
+  with before/after diffs and one-click undo.
+- **System / Settings** — health checks, Delta account and IP-whitelist help,
+  engine settings (loop interval, lookback, base timeframe, AI narration),
+  notifications (toasts, sounds, browser notifications, server alerts),
+  theme/accent/density, exports. Installable as an app (PWA); `⌘K` opens the
+  command palette, `⌘J` Jarvis, `g` + key jumps between pages.
+
+Every dashboard or Jarvis change is saved server-side (MongoDB when configured,
+plus `data/runtime_state.json`): markets, per-coin slots, risk, engine, mode,
+auto/manual, pause and run state. Saved values win over `config.yaml` until a
+deploy bumps `CONFIG_REVISION` in `server.py`; `GET /api/config/export` returns
+the live configuration as YAML.
 
 **Pause new entries** keeps position management active while the loop is running.
 **Stop** stops the whole loop after its current cycle, including local protection.
