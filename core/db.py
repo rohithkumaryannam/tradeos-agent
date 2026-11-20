@@ -14,7 +14,7 @@ from contextlib import contextmanager
 log = logging.getLogger("tradeos")
 
 _lock = threading.Lock()
-_db = None
+_handle = None  # the live Database; NOT named _db, which is the accessor function below
 _tried = False
 _last_attempt = 0.0
 _local = threading.local()
@@ -49,10 +49,10 @@ def _db():
 
 
 def _connect():
-    global _db, _tried, _last_attempt
+    global _handle, _tried, _last_attempt
     with _lock:
-        if _db is not None:
-            return _db
+        if _handle is not None:
+            return _handle
         now = time.monotonic()
         if _tried and now - _last_attempt < 30:
             return None
@@ -70,12 +70,12 @@ def _connect():
             db.command("ping")
             db.trades.create_index("ts")
             db.trades.create_index("strategy")
-            _db = db
+            _handle = db
             log.info("MongoDB connected: db=%s", db.name)
         except Exception as e:
             log.warning("MongoDB unavailable, continuing without it: %s", e)
-            _db = None
-        return _db
+            _handle = None
+        return _handle
 
 
 def available() -> bool:

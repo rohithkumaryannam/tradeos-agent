@@ -14,6 +14,8 @@ from core.agent import Agent
 from core.settings import RiskConfig, Settings
 from strategies.base import Action
 
+_REAL_CONNECT = db._connect  # conftest stubs db._connect per test; keep the real one
+
 
 COMBO_SUBS = [
     {"name": "donchian_breakout", "tag": "donchian_btc", "symbols": ["BTCUSD"],
@@ -427,3 +429,63 @@ def test_manual_risk_cannot_exceed_per_trade_ceiling(tmp_path):
     with pytest.raises(ValueError, match="ceiling"):
         a.manual_entry("BTCUSD", "long", risk_pct=2)
     assert a.manual_entry("BTCUSD", "long", risk_pct=0.5).event == "entry"
+
+
+def test_db_keeps_working_after_the_first_real_connect(monkeypatch):
+    """Regression: the stored connection used to share the name `_db` with the
+    accessor function, so the first successful connect replaced the function
+    with a Database object and every later call raised "'Database' object is
+    not callable". On the live bot that froze the execution-lease check."""
+    import pymongo
+
+    class Coll:
+        def __init__(self):
+            self.docs = {}
+
+        def create_index(self, *a, **k):
+            pass
+
+        def find_one_and_update(self, flt, upd, **k):
+            doc = self.docs.setdefault(flt["_id"], {"_id": flt["_id"]})
+            doc.update(upd["$set"])
+            return doc
+
+        def delete_one(self, flt):
+            self.docs.pop(flt["_id"], None)
+
+    class FakeDB:
+        name = "fake"
+
+        def __init__(self):
+            self.cols = {}
+
+        def command(self, *a, **k):
+            return {"ok": 1}
+
+        def __getattr__(self, name):
+            return self.cols.setdefault(name, Coll())
+
+    fake = FakeDB()
+
+    class Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def get_default_database(self):
+            return fake
+
+    monkeypatch.setattr(pymongo, "MongoClient", Client)
+    monkeypatch.setenv("MONGODB_URI", "mongodb://example.invalid/tradeos")
+    monkeypatch.setattr(db, "_connect", _REAL_CONNECT)
+    monkeypatch.setattr(db, "_handle", None, raising=False)
+    monkeypatch.setattr(db, "_tried", False)
+    monkeypatch.setattr(db, "_last_attempt", 0.0)
+
+    for _ in range(3):  # the 2nd call is the one that used to blow up
+        assert db.acquire_execution_lease("me") is True
+    assert db.available() is True
+    assert db.status() == {"configured": True, "connected": True}
+    db.release_execution_lease("me")
+    assert "delta-demo" not in fake.execution_lease.docs
+    with db.offline():
+        assert db.available() is False
